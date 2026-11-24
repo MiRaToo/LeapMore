@@ -5,7 +5,12 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 function selectButton(button) {
-  for (const sibling of $$('button[aria-pressed]', button.parentElement)) {
+  const group = button.parentElement;
+  const buttons = $$('button[aria-pressed]', group);
+  if (group.matches('.feature-tabs, .sync-options, .platforms')) {
+    group.style.setProperty('--selected', buttons.indexOf(button));
+  }
+  for (const sibling of buttons) {
     sibling.setAttribute('aria-pressed', String(sibling === button));
   }
 }
@@ -20,9 +25,9 @@ function enter(element) {
 }
 
 const readings = {
-  range: { label: '纯电续航', value: '195', unit: 'km', icon: 'battery' },
-  cabin: { label: '车内温度', value: '24.0', unit: '°C', icon: 'temp' },
-  lock: { label: '门锁状态', value: '已锁车', unit: '', icon: 'lock' },
+  range: { label: '纯电续航', value: '195', unit: 'km' },
+  cabin: { label: '车内温度', value: '24.0', unit: '°C' },
+  lock: { label: '门锁状态', value: '已锁车', unit: '' },
 };
 
 for (const button of $$('[data-sensor]')) {
@@ -32,32 +37,31 @@ for (const button of $$('[data-sensor]')) {
     selectButton(button);
     const reading = readings[key];
     $('.callout').dataset.reading = key;
-    $('.callout-head use').setAttribute('href', '#i-' + reading.icon);
     $('#read-label').textContent = reading.label;
     $('#read-value').textContent = reading.value;
     $('#read-unit').textContent = reading.unit;
-    enter($('.callout-card'));
+    enter($('.callout'));
   });
 }
 
 const features = {
   vehicle: {
-    en: 'VEHICLE STATUS', icon: 'car', title: ['出发前，', '先看一眼车。'],
+    icon: 'car', title: '出发前，先看一眼车。',
     text: '电量、续航、胎压和门锁状态集中在首页。驻车时，可按车型和账号权限远程操作车锁、车窗和空调。',
     screens: { vehicle: '车况首页', controls: '车辆控制', climate: '空调与加热', widgets: '桌面卡片' },
   },
   trips: {
-    en: 'TRIP LOG', icon: 'route', title: ['这一程，', '开了多远？'],
+    icon: 'route', title: '这一程，开了多远？',
     text: '路上查看实时车速、里程和行驶时长。回家后按天翻看历史行程，找到每次出发的时间和平均能耗。',
     screens: { trips: '行程记录', 'data-sources': '记录与数据源' },
   },
   charges: {
-    en: 'CHARGING LOG', icon: 'charge', title: ['补了多少电，', '随时能看。'],
+    icon: 'charge', title: '补了多少电，随时能看。',
     text: '充电中查看充入电量和功率，结束后按天翻看明细。设置交流与直流电价，还可以估算每次补能的费用。',
     screens: { charges: '充电记录' },
   },
   statistics: {
-    en: 'ENERGY INSIGHTS', icon: 'chart', title: ['用电的变化，', '一周一月看。'],
+    icon: 'chart', title: '用电的变化，一周一月看。',
     text: '按周或月查看行驶里程和百公里能耗，比较不同日期的用车情况。电费按电量与电价估算，实际金额以充电账单为准。',
     screens: { statistics: '能耗统计' },
   },
@@ -84,10 +88,8 @@ for (const button of $$('[data-feature]')) {
     selectButton(button);
     const key = button.dataset.feature;
     const feature = features[key];
-    $('.feature-stage').dataset.theme = key;
-    $('.feature-tag use').setAttribute('href', '#i-' + feature.icon);
-    $('#feature-en').textContent = feature.en;
-    $('#feature-title').replaceChildren(feature.title[0], document.createElement('br'), feature.title[1]);
+    $('.feature-icon use').setAttribute('href', '#i-' + feature.icon);
+    $('#feature-title').textContent = feature.title;
     $('#feature-text').textContent = feature.text;
     const screens = Object.entries(feature.screens);
     screenOptions.replaceChildren(...screens.map(([id, name], index) => {
