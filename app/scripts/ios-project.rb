@@ -50,6 +50,7 @@ FileUtils.mkdir_p(widget_folder)
 Xcodeproj::Plist.write_to_path(groups, File.join(widget_folder, 'LeapWidget.entitlements'))
 Xcodeproj::Plist.write_to_path({
   'CFBundleDisplayName' => 'LeapMore 车辆',
+  'CFBundleName' => '$(PRODUCT_NAME)',
   'CFBundleIdentifier' => '$(PRODUCT_BUNDLE_IDENTIFIER)',
   'CFBundleExecutable' => '$(EXECUTABLE_NAME)',
   'CFBundlePackageType' => 'XPC!',
