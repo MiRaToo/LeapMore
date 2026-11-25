@@ -21,7 +21,7 @@ final class LeapBridgeViewController: CAPBridgeViewController {
 final class LeapVaultPlugin: CAPPlugin, CAPBridgedPlugin {
     let identifier = "LeapVaultPlugin"
     let jsName = "LeapVault"
-    let pluginMethods = ["get", "set", "remove", "biometricsAvailable", "getWithBiometrics"].map {
+    let pluginMethods: [CAPPluginMethod] = ["get", "set", "remove", "biometricsAvailable", "getWithBiometrics"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let biometricPrefix = "remote-control-biometric:"
@@ -105,7 +105,7 @@ final class LeapVaultPlugin: CAPPlugin, CAPBridgedPlugin {
 final class LeapAuthPlugin: CAPPlugin, CAPBridgedPlugin {
     let identifier = "LeapAuthPlugin"
     let jsName = "LeapAuth"
-    let pluginMethods = ["begin", "take"].map {
+    let pluginMethods: [CAPPluginMethod] = ["begin", "take"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private static let callbackPath = "/leapmore-ha"
@@ -204,7 +204,7 @@ final class LeapAuthPlugin: CAPPlugin, CAPBridgedPlugin {
 final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
     let identifier = "LeapWidgetPlugin"
     let jsName = "LeapWidget"
-    let pluginMethods = ["update", "clear", "take"].map {
+    let pluginMethods: [CAPPluginMethod] = ["update", "clear", "take"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let storage = UserDefaults(suiteName: "group.com.leapmore.app")
@@ -242,7 +242,7 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
 final class LeapSettingsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate {
     let identifier = "LeapSettingsPlugin"
     let jsName = "LeapSettings"
-    let pluginMethods = ["open", "openAmap", "saveCsv", "getAppIcon", "setAppIcon"].map {
+    let pluginMethods: [CAPPluginMethod] = ["open", "openAmap", "saveCsv", "getAppIcon", "setAppIcon"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private var csvExport: (call: CAPPluginCall, folder: URL)?
@@ -349,7 +349,7 @@ final class LeapSettingsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
 final class LeapRecorderPlugin: CAPPlugin, CAPBridgedPlugin {
     let identifier = "LeapRecorderPlugin"
     let jsName = "LeapRecorder"
-    let pluginMethods = [CAPPluginMethod(name: "clear", returnType: CAPPluginReturnPromise)]
+    let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "clear", returnType: CAPPluginReturnPromise)]
 
     @objc func clear(_ call: CAPPluginCall) {
         guard let vehicle = call.getString("vehicle"), !vehicle.isEmpty else {
