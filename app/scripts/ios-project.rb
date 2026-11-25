@@ -82,6 +82,7 @@ end
       settings['CODE_SIGN_ENTITLEMENTS'] = 'LeapWidget/LeapWidget.entitlements'
       settings['INFOPLIST_FILE'] = 'LeapWidget/Info.plist'
       settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.leapmore.app.widget'
+      settings['PRODUCT_NAME'] = '$(TARGET_NAME)'
       settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
       settings['SKIP_INSTALL'] = 'YES'
       settings['SWIFT_VERSION'] = '5.0'
