@@ -158,35 +158,39 @@ for (const button of $$('[data-sync]')) {
   });
 }
 
-const releaseBase = 'https://github.com/MiRaToo/LeapMore';
-const guide = releaseBase + '/blob/v0.1.0/app/README.md';
-const platforms = {
-  android: { title: 'Android 安装包', meta: 'v0.1.0 预发布 · Android 7.0+ · 4.1 MiB', icon: 'download', action: '免费下载 APK', url: releaseBase + '/releases/download/v0.1.0/LeapMore-v0.1.0-android.apk' },
-  ios: { title: '从源码构建 iOS 版', meta: '使用 Xcode 编译，配置自己的签名团队后安装。', icon: 'code', action: '查看 iOS 构建指南', url: guide + '#ios' },
-  harmony: { title: '从源码构建鸿蒙版', meta: '使用 DevEco Studio 构建 HAP，并配置自己的签名。', icon: 'code', action: '查看鸿蒙构建指南', url: guide + '#鸿蒙' },
-};
-for (const button of $$('[data-platform]')) {
-  button.addEventListener('click', () => {
-    if (button.getAttribute('aria-pressed') === 'true') return;
-    selectButton(button);
-    const platform = platforms[button.dataset.platform];
-    $('#platform-title').textContent = platform.title;
-    $('#platform-meta').textContent = platform.meta;
-    $('#platform-link').href = platform.url;
-    $('#platform-link span').textContent = platform.action;
-    $('#platform-link use').setAttribute('href', '#i-' + platform.icon);
-    enter($('.install-content'));
-  });
+const platformPicker = $('.platforms');
+const platformButtons = $$('[data-platform]', platformPicker);
+
+function showPlatform(button) {
+  selectButton(button);
+  for (const option of platformButtons) {
+    const panel = document.getElementById(option.getAttribute('aria-controls'));
+    panel.hidden = option !== button;
+  }
 }
 
-const menu = $('.mobile-menu');
+for (const button of platformButtons) {
+  button.addEventListener('click', () => {
+    if (button.getAttribute('aria-pressed') === 'true') return;
+    showPlatform(button);
+    enter(document.getElementById(button.getAttribute('aria-controls')));
+  });
+}
+showPlatform(platformButtons[0]);
+platformPicker.hidden = false;
+
+const headerMenus = $$('.head-actions details');
 document.addEventListener('click', event => {
-  if (menu.open && (!menu.contains(event.target) || event.target.closest('a'))) menu.open = false;
+  for (const menu of headerMenus) {
+    if (menu.open && (!menu.contains(event.target) || event.target.closest('a'))) menu.open = false;
+  }
 });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && menu.open) {
-    menu.open = false;
-    $('summary', menu).focus();
+  if (event.key !== 'Escape') return;
+  const openMenu = headerMenus.find(menu => menu.open);
+  if (openMenu) {
+    openMenu.open = false;
+    $('summary', openMenu).focus();
   }
 });
 

@@ -7,12 +7,12 @@
   <meta name="theme-color" content="#0e1114" media="(prefers-color-scheme: dark)">
   <meta name="description" content="LeapMore 是面向中国大陆零跑车主的开源车辆助手。查看车况、远程控车、记录行程与充电，并同步 Home Assistant 历史记录。">
   <meta property="og:title" content="LeapMore · 零跑车主的开源助手">
-  <meta property="og:description" content="一个开源免费的第三方零跑车辆助手。探索真实界面，下载 Android 版本。">
+  <meta property="og:description" content="一个开源免费的第三方零跑车辆助手。探索真实界面，下载 Android、iOS / iPadOS 和鸿蒙安装包。">
   <meta property="og:image" content="https://miratoo.github.io/LeapMore/assets/app-overview.webp">
   <title>LeapMore · 零跑车主的开源车辆助手</title>
   <link rel="icon" type="image/png" href="./assets/app-icon.png">
-  <link rel="stylesheet" href="./style.css?v=app-theme">
-  <script src="./app.js?v=app-theme" defer></script>
+  <link rel="stylesheet" href="./style.css?v=downloads-2">
+  <script src="./app.js?v=downloads-2" defer></script>
 </head>
 <body>
   <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -32,7 +32,7 @@
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5m6 0h5v5m0 6v5h-5m-6 0H4v-5"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 7h18M3 16h18"/></symbol>
-    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-14-2 18"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.2 4.9a5 5 0 0 0-7.1 0L12 6l-1.1-1.1a5 5 0 0 0-7.1 7.1L12 20l8.2-8a5 5 0 0 0 0-7.1Z"/></symbol>
   </svg>
   <a class="skip" href="#main">跳至正文</a>
   <header class="site-head">
@@ -40,6 +40,16 @@
       <a class="brand" href="#top" aria-label="LeapMore 首页"><img src="./assets/app-icon.png" width="33" height="33" alt="">LeapMore</a>
       <nav class="wide-nav" aria-label="主导航"><a href="#features">功能体验</a><a href="#sync">数据同步</a><a href="#download">下载安装</a></nav>
       <div class="head-actions"><a class="source-link" href="https://github.com/MiRaToo/LeapMore"><svg class="icon"><use href="#i-github"/></svg>GitHub</a>
+        <details class="support-menu">
+          <summary><svg class="icon" aria-hidden="true"><use href="#i-heart"/></svg>赞赏作者</summary>
+          <div class="support-card">
+            <figure>
+              <img src="./assets/wechat-reward.png" alt="LeapMore 作者的微信赞赏码" width="504" height="504" loading="lazy">
+              <figcaption>微信扫码赞赏</figcaption>
+            </figure>
+            <a class="button secondary" href="https://afdian.com/a/leaplink">在爱发电支持作者</a>
+          </div>
+        </details>
         <a class="head-cta" href="#download">获取 App</a>
         <details class="mobile-menu"><summary aria-label="导航菜单"><svg class="icon"><use href="#i-menu"/></svg></summary>
           <nav aria-label="移动导航"><a href="#features">功能体验</a><a href="#sync">数据同步</a><a href="#download">下载安装</a><a href="https://github.com/MiRaToo/LeapMore">GitHub</a></nav>
@@ -55,10 +65,10 @@
           <p class="hero-title">零跑车主的开源助手</p>
           <p class="hero-description">出发前查看车况，回家后回顾能耗。<br>把每一次行程和充电，记在自己的手机里。</p>
           <div class="hero-actions">
-            <a class="button primary" href="https://github.com/MiRaToo/LeapMore/releases/download/v0.1.0/LeapMore-v0.1.0-android.apk"><svg class="icon"><use href="#i-download"/></svg>下载 Android 版</a>
+            <a class="button primary" href="#download"><svg class="icon"><use href="#i-download"/></svg>下载安装包</a>
             <a class="button secondary" href="#features"><svg class="icon"><use href="#i-play"/></svg>探索功能</a>
           </div>
-          <a class="version" href="https://github.com/MiRaToo/LeapMore/releases/tag/v0.1.0">v0.1.0 预发布 · Android 7.0+</a>
+          <a class="version" href="https://github.com/MiRaToo/LeapMore/releases/tag/v0.1.0">v0.1.0 预发布 · Android / iOS / 鸿蒙</a>
         </div>
         <div class="vehicle-preview" role="group" aria-label="交互式车况演示">
           <div class="vehicle-head"><strong>我的 C10</strong><span>已驻车</span></div>
@@ -127,10 +137,29 @@
     <section class="section wrap install-section" id="download" aria-labelledby="download-title">
       <div class="install-intro"><h2 id="download-title">下载 LeapMore</h2><p>开源免费，登录自己的零跑账号即可选车。<br>想先逛逛？在 App 登录页选择演示账号。</p><a class="text-link" href="https://github.com/MiRaToo/LeapMore/releases">查看全部发布版本</a></div>
       <div class="install-box">
-        <div class="platforms" role="group" aria-label="选择安装平台"><button type="button" data-platform="android" aria-pressed="true">Android</button><button type="button" data-platform="ios" aria-pressed="false">iOS</button><button type="button" data-platform="harmony" aria-pressed="false">鸿蒙</button></div>
-        <div class="install-content"><img src="./assets/app-icon.png" width="56" height="56" alt="" loading="lazy"><div><h3 id="platform-title">Android 安装包</h3><p id="platform-meta">v0.1.0 预发布 · Android 7.0+ · 4.1 MiB</p></div></div>
-        <a class="button primary" id="platform-link" href="https://github.com/MiRaToo/LeapMore/releases/download/v0.1.0/LeapMore-v0.1.0-android.apk"><svg class="icon"><use href="#i-download"/></svg><span>免费下载 APK</span></a>
-        <noscript><p><a href="https://github.com/MiRaToo/LeapMore/blob/v0.1.0/app/README.md">iOS 与鸿蒙源码构建指南</a></p></noscript>
+        <div class="platforms" role="group" aria-label="选择安装平台" hidden>
+          <button type="button" data-platform="android" aria-controls="download-android" aria-pressed="true">Android</button>
+          <button type="button" data-platform="ios" aria-controls="download-ios" aria-pressed="false">iOS / iPadOS</button>
+          <button type="button" data-platform="harmony" aria-controls="download-harmony" aria-pressed="false">鸿蒙</button>
+        </div>
+        <article class="platform-panel" id="download-android" aria-labelledby="platform-title">
+          <div class="install-content"><img src="./assets/app-icon.png" width="56" height="56" alt="" loading="lazy"><div><h3 id="platform-title">Android 安装包</h3><p>v0.1.0 预发布 · Android 7.0+ · 4.1 MiB</p></div></div>
+          <a class="button primary" id="platform-link" href="https://github.com/MiRaToo/LeapMore/releases/download/v0.1.0/LeapMore-v0.1.0-android.apk"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>免费下载 APK</a>
+        </article>
+        <article class="platform-panel" id="download-ios" aria-labelledby="ios-title">
+          <div class="install-content"><img src="./assets/app-icon.png" width="56" height="56" alt="" loading="lazy"><div><h3 id="ios-title">iPhone / iPad 安装包</h3><p>v0.1.0 预发布 · 2.0 MiB</p></div></div>
+          <p class="requirements">iPhone 需要 iOS 15.0 或以上，iPad 需要 iPadOS 15.0 或以上。小号桌面小组件的交互按钮需要对应系统 17.0 或以上。</p>
+          <p class="signing-note" id="ios-signing">此 IPA 未签名，真机安装前需自行签名。尚未进行真机安装测试。</p>
+          <a class="button primary" aria-describedby="ios-signing" href="https://github.com/MiRaToo/LeapMore/releases/download/v0.1.0/LeapMore-v0.1.0-ios-unsigned.ipa"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>下载未签名 IPA</a>
+          <a class="build-guide" href="https://github.com/MiRaToo/LeapMore/blob/v0.1.0/app/README.md#ios">iOS 源码构建指南</a>
+        </article>
+        <article class="platform-panel" id="download-harmony" aria-labelledby="harmony-title">
+          <div class="install-content"><img src="./assets/app-icon.png" width="56" height="56" alt="" loading="lazy"><div><h3 id="harmony-title">鸿蒙安装包</h3><p>v0.1.0 预发布 · 23.4 MiB</p></div></div>
+          <p class="requirements">需要 HarmonyOS 6.0.0（API 20）或以上。</p>
+          <p class="signing-note" id="harmony-signing">此 HAP 未签名，真机安装前需自行签名。尚未进行真机安装测试。</p>
+          <a class="button primary" aria-describedby="harmony-signing" href="https://github.com/MiRaToo/LeapMore/releases/download/v0.1.0/LeapMore-v0.1.0-harmonyos-unsigned.hap"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>下载未签名 HAP</a>
+          <a class="build-guide" href="https://github.com/MiRaToo/LeapMore/blob/v0.1.0/app/README.md#鸿蒙">鸿蒙源码构建指南</a>
+        </article>
       </div>
     </section>
   </main>
