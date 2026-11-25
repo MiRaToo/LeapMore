@@ -17,7 +17,9 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 button:disabled { cursor: default; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .sr-only:focus-visible { clip-path: none; height: auto; width: auto; margin: 0; z-index: 9; }
-.app-screen { --sw: min(100vw, 460px); --sh: 100dvh; border-radius: 0; width: var(--sw); height: 100dvh; }
+:root { --app-height: 100vh; }
+@supports (height: 100dvh) { :root { --app-height: 100dvh; } }
+.app-screen { --sw: min(100vw, 460px); --sh: var(--app-height); border-radius: 0; width: var(--sw); height: var(--sh); }
 .app-view { outline: none; overscroll-behavior: none; padding-bottom: var(--safe-bottom); }
 .with-nav .app-view { padding-bottom: calc(73px + var(--safe-bottom)); }
 .app-scroll-content {
@@ -53,9 +55,11 @@ button:disabled { cursor: default; }
 .app-screen .tabbar .tab svg { width: 23px; height: 23px; }
 .tabbar .tab, .hero-actions .circ { -webkit-tap-highlight-color: transparent; }
 .record-tabs { width: min(100%, 224px); min-height: 36px; margin-inline: auto; }
-.app-dialog.scrim { position: fixed; inset: 0; margin: 0 auto; border: 0; padding: 0; width: min(100vw, 460px); max-width: none; height: 100dvh; max-height: none; background: transparent; color: var(--text); }
+.app-dialog.scrim { position: fixed; inset: 0; margin: 0 auto; border: 0; padding: 0; width: min(100vw, 460px); max-width: none; height: var(--app-height); max-height: none; background: transparent; color: var(--text); }
 .app-dialog:not([open]) { display: none; }
 .app-dialog::backdrop { background: rgba(10, 20, 28, .42); }
+.app-dialog + .backdrop, ._dialog_overlay { position: fixed; inset: 0; }
+.app-dialog + .backdrop { background: rgba(10, 20, 28, .42); }
 .widget-control-window body { background: transparent; }
 .widget-control-window .app-dialog .sheet { width: calc(100% - 24px); margin: 0 auto max(10px, var(--safe-bottom)); align-self: end; border-radius: 24px; }
 .app-dialog .sheet { animation-timing-function: var(--ease-drawer); padding-bottom: max(22px, calc(var(--safe-bottom) + 12px)); overscroll-behavior: contain; }

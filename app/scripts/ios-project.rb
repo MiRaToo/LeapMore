@@ -72,7 +72,7 @@ end
   target.build_configurations.each do |config|
     settings = config.build_settings
     settings['DEVELOPMENT_TEAM'] = ENV['LEAPMORE_IOS_TEAM'] if ENV['LEAPMORE_IOS_TEAM']
-    settings['CURRENT_PROJECT_VERSION'] = '1'
+    settings['CURRENT_PROJECT_VERSION'] = '2'
     settings['MARKETING_VERSION'] = version
     if target == main
       settings['CODE_SIGN_ENTITLEMENTS'] = 'App/LeapMore.entitlements'

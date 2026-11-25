@@ -318,7 +318,7 @@ function EmptyRecords({ kind }: { kind: string }) {
 
 export function TariffSheet({ close }: { close: () => void }) {
   const m = useModelContext();
-  const [draft, setDraft] = useState(() => structuredClone(m.baseTariff));
+  const [draft, setDraft] = useState(m.baseTariff);
   const editEfficiency = m.source === 'ha';
   const [issue, setIssue] = useState('');
   const mins = (time: string) => { const [h, m] = time.split(':').map(Number); return h * 60 + m; };

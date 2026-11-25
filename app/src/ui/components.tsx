@@ -1,5 +1,7 @@
 import { useId, useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import dialogPolyfill from 'dialog-polyfill';
 import { Link } from 'react-router-dom';
 import { Icon } from './Icon';
 import type { IconName } from './Icon';
@@ -53,10 +55,11 @@ export function Sheet({ title, sub, children, close, showClose, className = '', 
   const dialog = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
     const node = dialog.current!;
+    dialogPolyfill.registerDialog(node);
     node.showModal();
     return () => { if (node.open) node.close(); };
   }, []);
-  return <dialog className={'app-dialog scrim' + (className.includes('cmd-sheet') ? ' cmd-scrim' : '')}
+  const sheet = <dialog className={'app-dialog scrim' + (className.includes('cmd-sheet') ? ' cmd-scrim' : '')}
     ref={dialog} aria-labelledby={id} onCancel={e => { e.preventDefault(); close?.(); }} onClick={e => { if (dismissOnBackdrop && e.target === e.currentTarget) close?.(); }}>
     <section className={'sheet ' + className} data-step={state}>
       {decorated && <div className="grabber" />}
@@ -67,6 +70,9 @@ export function Sheet({ title, sub, children, close, showClose, className = '', 
       </>}{children}
     </section>
   </dialog>;
+  // A polyfilled modal needs to sit outside the screen's scrolling and stacking contexts.
+  return typeof HTMLDialogElement === 'undefined' || typeof HTMLDialogElement.prototype.showModal !== 'function'
+    ? createPortal(sheet, document.body) : sheet;
 }
 export function SheetButtons({ cancel, action, label, cancelLabel = '取消', disabled, danger }: {
   cancel: () => void; action: () => void; label: string; cancelLabel?: string; disabled?: boolean; danger?: boolean;
