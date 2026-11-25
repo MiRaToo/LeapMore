@@ -190,6 +190,7 @@ h2 { font-size: clamp(2rem, 3vw, 2.9rem); line-height: 1.24; font-weight: 710; l
 .install-content h3 { font-size: 1.22rem; }
 .install-content p { margin-top: 5px; }
 .install-box .button { width: 100%; }
+.mirror-download { margin-top: 12px; background: var(--selected-fill); box-shadow: none; }
 .requirements, .signing-note { font-size: .94rem; line-height: 1.65; margin-bottom: 14px; }
 .requirements { color: var(--muted); }
 .signing-note { padding: 10px 14px; background: var(--card-2); border-inline-start: 3px solid var(--icon-outline); border-radius: 0 var(--r-xs) var(--r-xs) 0; }
