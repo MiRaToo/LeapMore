@@ -1,0 +1,56 @@
+name: Build LeapMore iOS v0.1.0
+
+on:
+  push:
+    branches: [codex/build-ios-v0.1.0-20261125]
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ecd0fbd2b883b4f598abd25d3ad60432e010b3b4
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare native project
+        working-directory: app
+        run: |
+          xcodebuild -version
+          npm install -g pnpm@11
+          pnpm install --frozen-lockfile
+          ruby -rxcodeproj -e 'puts Xcodeproj::VERSION' || gem install xcodeproj --user-install --no-document
+          pnpm native:ios
+      - name: Build device application and widget
+        working-directory: app
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/App.app"
+          widget="$app/PlugIns/LeapWidget.appex"
+          test -d "$widget"
+          for bundle in "$app" "$widget"; do
+            test "$(plutil -extract CFBundleShortVersionString raw -o - "$bundle/Info.plist")" = 0.1.0
+            executable="$(plutil -extract CFBundleExecutable raw -o - "$bundle/Info.plist")"
+            lipo -verify_arch arm64 "$bundle/$executable"
+          done
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          ditto "$app" "$RUNNER_TEMP/package/Payload/App.app"
+          cd "$RUNNER_TEMP/package"
+          ditto -c -k --norsrc --keepParent Payload "$GITHUB_WORKSPACE/LeapMore-v0.1.0-ios-unsigned.ipa"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leapmore-ios-unsigned
+          path: LeapMore-v0.1.0-ios-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 3
