@@ -41,7 +41,7 @@ jobs:
           for bundle in "$app" "$widget"; do
             test "$(plutil -extract CFBundleShortVersionString raw -o - "$bundle/Info.plist")" = 0.1.0
             executable="$(plutil -extract CFBundleExecutable raw -o - "$bundle/Info.plist")"
-            lipo -verify_arch arm64 "$bundle/$executable"
+            lipo "$bundle/$executable" -verify_arch arm64
           done
           mkdir -p "$RUNNER_TEMP/package/Payload"
           ditto "$app" "$RUNNER_TEMP/package/Payload/App.app"
