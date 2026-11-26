@@ -195,6 +195,10 @@ h2 { font-size: clamp(2rem, 3vw, 2.9rem); line-height: 1.24; font-weight: 710; l
 .requirements { color: var(--muted); }
 .signing-note { padding: 10px 14px; background: var(--card-2); border-inline-start: 3px solid var(--icon-outline); border-radius: 0 var(--r-xs) var(--r-xs) 0; }
 .build-guide { display: block; width: fit-content; margin: 12px auto 0; color: var(--icon-outline); font-size: .87rem; text-decoration: underline; text-underline-offset: 3px; }
+.ios-install-help { margin-top: 14px; padding: 12px 14px; border-radius: var(--r-xs); background: var(--card-2); font-size: .94rem; line-height: 1.65; }
+.ios-install-help p + p { margin-top: 6px; }
+.tutorial-links { display: flex; flex-wrap: wrap; gap: 2px 18px; margin-top: 8px; }
+.tutorial-links a { padding-block: 4px; color: var(--icon-outline); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 .platforms[hidden] ~ .platform-panel + .platform-panel { margin-top: 24px; border-top: 1px solid var(--line); }
 footer { border-top: 1px solid var(--line); background: var(--card); }
 .footer-inner { min-height: 128px; }

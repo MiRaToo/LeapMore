@@ -76,6 +76,15 @@ def platform_card(release, platform, title, extension, label, release_url):
     button_id = ' id="platform-link"' if platform == "android" else ""
     lines.append(f'  <a class="button primary"{button_id}{description} href="{escape(target)}">'
                  f'<svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>{action}</a>')
+    if platform == "ios" and files:
+        lines.append('  <div class="ios-install-help">')
+        lines.append('    <p>iPhone 和 iPad 需要侧载安装 IPA。如果设备上已安装巨魔商店（TrollStore），可用它打开下载的 IPA。也可以按下方教程使用 SideStore 侧载。</p>')
+        if "Keep App Extensions" in release["body"]:
+            lines.append('    <p>需要桌面小组件时，请在 SideStore 导入 IPA 时选择「Keep App Extensions」。</p>')
+        lines.append('    <div class="tutorial-links">'
+                     '<a href="https://www.bilibili.com/video/BV1Vbs167Eib">iOS 侧载教程</a>'
+                     '<a href="https://www.bilibili.com/video/BV1VEsE6gEE8">SideStore 自动续签教程</a></div>')
+        lines.append('  </div>')
     if platform in {"ios", "harmony"}:
         guide = f"{REPO}/blob/{quote(release['tag_name'], safe='')}/app/README.md"
         anchor, name = ("ios", "iOS") if platform == "ios" else ("鸿蒙", "鸿蒙")
