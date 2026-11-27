@@ -29,6 +29,27 @@ test('preparation sends one command containing only the chosen modules', () => {
   assert.equal(matchesRemoteState({ kind: 'sentry', on: false }, { sentry: null } as never), false);
 });
 
+test('shared presets check granted commands separately from model features', () => {
+  const shared = { ...vehicle, source: 'live' as const, shared: true, abilities: ['12', '30'],
+    commandRights: ['170', '171', '180', '301', '320', '360', '361', '370', '440'] };
+  const can = (rights: string[], part: typeof content, scheduled = false, location = true) =>
+    allowsPreparationContent({ ...shared, commandRights: rights }, part, scheduled, location);
+  const climate = { air_condition: content.air_condition };
+  const nav = { syn_path: content.syn_path };
+  assert.ok(can(shared.commandRights, content));
+  assert.ok(can(shared.commandRights, content, true));
+  assert.ok(can(['170', '360'], climate));
+  assert.ok(!can(['170', '360'], climate, true));
+  assert.ok(!can(['171', '360'], climate));
+  assert.ok(!can(['360', '361'], climate));
+  assert.ok(!can([], climate));
+  assert.ok(!can(['180'], nav, false, false));
+  assert.ok(!can(['360'], nav));
+  assert.ok(!can(['170', '360'], { ...climate, rearMirrorHeating: content.rearMirrorHeating }));
+  assert.ok(!can(['301'], { seat_setting: { isHeat: false } }));
+  assert.ok(!can(['370'], { seat_setting: { isHeat: true } }));
+});
+
 test('schedule writes preserve other plans and opaque fields and reject stale edits', () => {
   const plans = readPreparationPlans(JSON.stringify({ controls: [plan] }));
   const saved = applyPreparationEdit(plans, { action: 'save', preset: { name: '出发', content }, days: [1], time: '07:00' }, 'vin');

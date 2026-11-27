@@ -1,7 +1,7 @@
 import { Picker } from '../../ui/Picker';
 import { useState } from 'react';
 import { climatePresets, findClimatePreset } from '../../data/cloud/climatePresets';
-import { permitsFeature, permitsPreparationNavigation } from '../../data/cloud/preparation';
+import { permitsPreparationAction } from '../../data/cloud/preparation';
 import type { PreparationPreset } from '../../data/cloud/preparation';
 import type { Vehicle } from '../../data/types';
 import { useModelContext } from '../context';
@@ -21,8 +21,9 @@ export function loadPreparationPresets(stored: SavedPresets | null, vehicle?: Ve
   if (saved.defaultsVersion === 2 || saved.presets.some(p => p.id === 'winter' || p.name === '冬日温暖')) {
     return { ...saved, defaultsVersion: 2 };
   }
+  const seatHeat = vehicle && (vehicle.commandRights?.length || vehicle.abilities?.length) && permitsPreparationAction(vehicle, 301);
   const winter: PreparationPreset = { ...initialPresets[0], id: 'winter', name: '冬日温暖', temperature: 26, fan: 3,
-    seat: vehicle?.source === 'fixture' || vehicle?.abilities?.includes('301') ? 'heat' : 'none' };
+    seat: vehicle?.source === 'fixture' || seatHeat ? 'heat' : 'none' };
   return { ...saved, defaultsVersion: 2, presets: [...saved.presets, winter] };
 }
 
@@ -36,8 +37,8 @@ export function PreparationFields({ draft, patch, scheduled = false }: {
 }) {
   const m = useModelContext();
   const [picking, setPicking] = useState(false);
-  const supports = (id: number) => !!m.vehicle && permitsFeature(m.vehicle, id);
-  const canLocation = m.canSee('location') && !!m.vehicle && permitsPreparationNavigation(m.vehicle);
+  const supports = (id: number) => !!m.vehicle && permitsPreparationAction(m.vehicle, id);
+  const canLocation = m.canSee('location') && supports(180);
   const selected = findClimatePreset(draft.climatePreset);
   return <>
       <div className="prep-group">
@@ -61,7 +62,8 @@ export function PreparationFields({ draft, patch, scheduled = false }: {
       </div>
       <div className="prep-group">
         <div className="cRow"><Icon name="seatComfort" size={18} /><span className="cL">主驾座椅</span>
-          <Seg label="预设座椅" current={draft.seat} disabled={!supports(301) && draft.seat === 'none'} options={[[ 'none', '跳过'], ['heat', '加热'], ['vent', '通风']]} choose={seat => patch({ seat })} /></div>
+          <Seg label="预设座椅" current={draft.seat} options={([['none', '跳过'], ['heat', '加热'], ['vent', '通风']] as const)
+            .filter(([key]) => key === 'none' || key === draft.seat || supports(key === 'heat' ? 301 : 370))} choose={seat => patch({ seat })} /></div>
         {([['steering', '方向盘加热', 'steering', 320], ['mirrors', '后视镜加热', 'defrost', 440]] as const).map(([field, title, icon, id]) =>
           <div className="cRow" key={field}><Icon name={icon} size={18} /><span className="cL">{title}</span>
             <Switch checked={draft[field]} label={title} disabled={!supports(id) && !draft[field]} action={() => patch({ [field]: !draft[field] })} /></div>)}

@@ -21,16 +21,28 @@ export type PreparationEdit =
 export const preparationKey = (scope: string) => ['cloud', 'preparation-schedules', scope] as const;
 export const permitsCommand = (vehicle: Vehicle, id: number) =>
   !vehicle.commandRights?.length || vehicle.commandRights.includes(String(id));
-export const permitsFeature = (vehicle: Vehicle, id: number) =>
-  !vehicle.abilities?.length || vehicle.abilities.includes(String(id));
-// The preparation editor uses the navigation module (30). Some cars list the standalone send command (180).
-export const permitsPreparationNavigation = (vehicle: Vehicle) => permitsFeature(vehicle, 30) || permitsFeature(vehicle, 180);
+export function permitsPreparationAction(vehicle: Vehicle, id: number) {
+  const { abilities, commandRights } = vehicle;
+  // rightList grants commands (e.g. climate 170). carPer describes model features (e.g. AC protocol 12).
+  if (vehicle.shared || commandRights?.length) {
+    if (!commandRights?.includes(String(id))) return false;
+    if (id !== 180) return true;
+  }
+  if (id === 180 && abilities?.includes('30')) return true;
+  // Older vehicle records can supply only the combined preparation capability list.
+  return !abilities?.length || abilities.includes(String(id === 370 ? 301 : id));
+}
 export const preparationModules = {
   syn_path: 180, air_condition: 170, seat_setting: 301, steeringWheelHeatCtrl: 320, rearMirrorHeating: 440,
 } as const;
 export function allowsPreparationContent(vehicle: Vehicle, content: PreparationContent, scheduled: boolean, location: boolean) {
   return Object.keys(content).length > 0 && (!content.syn_path || location) &&
-    Object.entries(preparationModules).every(([key, id]) => !content[key] || (key === 'syn_path' ? permitsPreparationNavigation(vehicle) : permitsFeature(vehicle, scheduled && id === 170 ? 171 : id)));
+    Object.entries(preparationModules).every(([key, id]) => {
+      const value = content[key];
+      if (!value) return true;
+      if (key === 'seat_setting' && object(value) && value.isHeat === false) return permitsPreparationAction(vehicle, 370);
+      return permitsPreparationAction(vehicle, scheduled && id === 170 ? 171 : id);
+    });
 }
 
 export function preparationContent(preset: PreparationPreset, vehicle: Vehicle): PreparationContent {
