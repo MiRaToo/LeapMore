@@ -1,4 +1,4 @@
-import { numberOf } from '../ha/measurements.ts';
+import { mergeTemperatureSamples, numberOf } from '../ha/measurements.ts';
 import type { Charge, Frame, MetricSample } from '../ha/measurements.ts';
 import { defaultChargeEfficiency, estimateSocEnergy, socPercent } from '../vehicleEnergy.ts';
 import type { VehicleEnergySettings } from '../vehicleEnergy.ts';
@@ -9,6 +9,7 @@ const maxPower = 400;
 
 type Charging = {
   timeline: MetricSample[];
+  temperatures: MetricSample[];
   position?: Charge['position'];
   minRecordedBatteryTempC?: number;
   type: 'ac' | 'dc' | 'unknown';
@@ -28,11 +29,16 @@ export function sampledCharges(frames: Frame[], capacityKwh: number | null, now:
       id: 'sampled-charge-' + first.at, source: 'live', type: session.type, startedAt: first.at,
       endedAt: ended ? last.at : null, active: !ended, partial: session.partial || partial,
       kwh, socStart, socEnd, gridKwh: null, cost: null, energyBasis: kwh === null ? undefined : 'soc',
-      minRecordedBatteryTempC: session.minRecordedBatteryTempC, ...(session.position && { position: session.position }),
+      batteryTemperatures: session.temperatures, minRecordedBatteryTempC: session.minRecordedBatteryTempC, ...(session.position && { position: session.position }),
       powerTimeline: session.timeline, powers: session.timeline.flatMap(({ at, value }) => value === null ? [] : [{ at, value }]),
     });
   }
   for (const frame of frames) {
+    if (frame.chargeBoundary) {
+      if (active) finish(active, true, true);
+      active = undefined;
+      previous = null;
+    }
     // The synthetic trip gap markers and frames from older builds have no charge observation.
     if (!frame.changed.includes('charge')) continue;
     if (active && frame.at - active.timeline.at(-1)!.at > maxGap) {
@@ -50,12 +56,13 @@ export function sampledCharges(frames: Frame[], capacityKwh: number | null, now:
         active = undefined;
         previous = false;
       }
-      active ??= { timeline: [], type: kind, partial: previous !== false };
+      active ??= { timeline: [], temperatures: [], type: kind, partial: previous !== false };
       if (!active.position && frame.data.position?.at === frame.at) active.position = frame.data.position;
       if (active.type === 'unknown') active.type = kind;
       const temperature = numberOf(frame.data.batteryMinTemp);
-      if (frame.changed.includes('batteryMinTemp') && temperature !== null) {
-        active.minRecordedBatteryTempC = Math.min(active.minRecordedBatteryTempC ?? temperature, temperature);
+      if (frame.changed.includes('batteryMinTemp')) {
+        active.temperatures.push({ at: frame.at, value: temperature });
+        if (temperature !== null) active.minRecordedBatteryTempC = Math.min(active.minRecordedBatteryTempC ?? temperature, temperature);
       }
       const power = numberOf(frame.data.power);
       active.timeline.push({ at: frame.at, value: power !== null && power > 0 && power <= maxPower ? power : null, soc: socPercent(frame.data.soc) });
@@ -100,6 +107,7 @@ export function reconcileCharges(official: Charge[], sampled: Charge[], settings
       ...record,
       position: record.position ?? (sample?.position && record.endedAt !== null && sample.position.at >= record.startedAt && sample.position.at < record.endedAt ? sample.position : undefined),
       sampledId: sample?.id,
+      batteryTemperatures: mergeTemperatureSamples(record.startedAt, record.endedAt ?? Infinity, sample?.batteryTemperatures, record.batteryTemperatures),
       type: record.type === 'unknown' && sample ? sample.type : record.type,
       kwh: record.kwh ?? sample?.kwh ?? null,
       energyBasis: record.kwh !== null ? 'official' : sample?.energyBasis,

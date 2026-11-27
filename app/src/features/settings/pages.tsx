@@ -18,7 +18,7 @@ import type { AndroidBackgroundCheck, AppIcon } from '../../platform/settings';
 import type { OperationMode } from '../../platform/operationAuth';
 import { themeAccents, themeModes, useSetting } from '../../data/preferences';
 import type { ThemeAccent, ThemeMode } from '../../data/preferences';
-import { AppBar, Hint, Row, Section, Seg, Sheet, SheetButtons, asset, stamp } from '../../ui/components';
+import { AppBar, Hint, Row, Section, Seg, Sheet, SheetButtons, Switch, asset, stamp } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
 import { Diagnostics } from './Diagnostics';
 import { AccountProfile } from './AccountProfile';
@@ -49,6 +49,18 @@ function AppIconSettings() {
   </Section>;
 }
 
+export function Experiments() {
+  const { autoCheckIn, mode, expired } = useModelContext();
+  const note = mode === 'ha' ? '登录零跑账号后可使用自动签到。' : expired ? '请重新登录零跑账号。'
+    : !autoCheckIn.available ? '请在手机 App 中使用自动签到。' : mode === 'demo' ? '演示账号模拟每日签到。'
+    : '每天打开或返回 App 时，通过零跑官方页面为当前账号签到。';
+  return <><AppBar title="实验功能" back="/mine" /><div className="page no-nav">
+    <div className="list-card"><Row list icon="calendar" title="自动签到" right={<Switch label="自动签到" checked={autoCheckIn.enabled}
+      disabled={!autoCheckIn.enabled && (!autoCheckIn.available || expired)} action={autoCheckIn.toggle} />} /></div>
+    <p className="tiny muted" role="status">{autoCheckIn.status ? (mode === 'demo' ? '演示 · ' : '') + autoCheckIn.status : note}</p>
+  </div></>;
+}
+
 export function AppAppearance() {
   const { theme, setTheme, themeAccent, setThemeAccent, colorScheme } = useModelContext();
   return <><AppBar title="外观" back="/mine" /><div className="page no-nav">
@@ -71,7 +83,7 @@ export function Mine() {
   const m = useModelContext();
   const navigate = useNavigate();
   const { key } = useAmapKey();
-  const [sheet, setSheet] = useState<'logout' | 'about' | 'reward' | 'privacy' | 'cache' | 'amap' | null>(null);
+  const [sheet, setSheet] = useState<'logout' | 'about' | 'reward' | 'privacy' | 'cache' | 'amap' | 'demo' | null>(null);
   const [note, setNote] = useState('');
   const qc = useQueryClient();
   const close = () => { setSheet(null); setNote(''); };
@@ -87,10 +99,12 @@ export function Mine() {
   }
   return <><AppBar title="我的" back="/home" /><div className="page settings-page">
     <AccountProfile key={m.profileScope} />
+    {m.demo && <div className="list-card"><Row list icon="climatePresets" title="演示情景" onClick={() => setSheet('demo')} /></div>}
     <div className="list-card"><Row list icon="car" title="车辆管理" right={m.vehicles.length + ' 辆'} to="/vehicle-manage" />
       <Row list icon="key" title="车辆授权" to="/vehicle-access" /></div>
     <div className="list-card"><Row list icon="sun" title="外观" right={themeModes[m.theme]} to="/mine/appearance" />
       {Capacitor.getPlatform() === 'android' && <Row list icon="gear" title="快捷控制" to="/quick-controls" />}
+      <Row list icon="spark" title="实验功能" to="/mine/experiments" />
       <Row list icon="layout" title="桌面卡片预览" to="/widgets?from=mine" />
       <Row list icon="map" title="高德地图 Key" right={key ? '已配置' : '未配置'} onClick={() => setSheet('amap')} />
       <Row list icon="file" title="缓存管理" onClick={() => setSheet('cache')} /></div>
@@ -101,6 +115,7 @@ export function Mine() {
     <div className="list-card"><Row list icon="logout" title="退出登录" onClick={() => setSheet('logout')} /></div>
     <p className="tiny muted settings-footer">LeapMore 是免费提供的非官方项目</p>
     {sheet === 'amap' && <AmapKeySheet close={close} />}
+    {sheet === 'demo' && m.demo && <DemoSettings close={close} />}
     {sheet === 'logout' && <Sheet title="退出登录？" close={close}><p className="confirm-desc">退出后需重新登录。本机的记录与设置会保留。</p>
       <SheetButtons cancel={close} label="退出登录" action={() => { void m.logout().then(() => navigate('/login', { replace: true })).catch(() => setNote('退出失败，请重试。')); }} />{note && <p role="status">{note}</p>}</Sheet>}
     {sheet === 'privacy' && <Sheet title="隐私与免责声明" close={close}><p className="confirm-desc">{disclaimer}</p><p className="confirm-desc">系统版本将授权凭据保存在平台安全存储。脱敏 CSV 只包含日期与记录摘要。</p><button className="btn ghost" onClick={close}>关闭</button></Sheet>}
@@ -219,7 +234,8 @@ function IOSBackgroundGuide() {
   const m = useModelContext();
   return <><AppBar title="后台记录设置" back="/records-source" /><div className="page no-nav">
     <Section title="iPhone 记录方式">
-      {supportsManualTrips() ? <><p>在行程或充电页点「开始记录」，锁屏后会继续采集该车上报的车况。系统中断时会保留已记录的路段，回到任一页点「继续记录」即可续录。</p>
+      {supportsManualTrips() ? <><p>选择「手机记录」或「手机记录 + HA 同步」会向 iOS 申请后台记录。运行时间由系统决定。中断前的采样会保存在本机，可在数据源、行程或充电页点「继续记录」。</p>
+        <p>后台记录运行时，可在锁定屏幕查看进度，或长按灵动岛展开。停车等候下一次行程或充电时，实时活动也可能继续显示。点「结束记录」会同时停止手机后台采样。</p>
         <Row icon="route" title="前往行程记录" to="/records?tab=trips" /></> : <><p>打开 LeapMore 并保持在前台时，手机可以采集车辆上报。锁屏或切换 App 后，iOS 可能挂起采样。</p>
       <p className="small muted">iOS 没有为车况轮询提供永久常驻开关。</p></>}
     </Section>
@@ -296,6 +312,28 @@ function BackgroundRecorderGuide() {
   </div></>;
 }
 
+function DemoSettings({ close }: { close: () => void }) {
+  const m = useModelContext();
+  return <Sheet title="演示情景" close={close} showClose className="demo-settings-sheet">
+      <label className="mapping-row"><span>数据状态</span>
+      <Picker aria-label="数据状态" value={m.debug.scenario} onValue={v => { const scenario = v as typeof m.debug.scenario; m.setDebug(s => ({ ...s, scenario })); }}>
+        <option value="normal">正常</option><option value="stale">过期</option><option value="offline">断网</option><option value="pending">待确认</option></Picker></label>
+      <label className="mapping-row"><span>账号</span><Picker aria-label="账号情景" value={m.debug.account} onValue={v => { const account = v as typeof m.debug.account; m.setDebug(s => ({ ...s, account })); }}>
+        <option value="normal">正常</option><option value="expired">会话失效</option><option value="empty">无授权车辆</option></Picker></label>
+      <label className="mapping-row"><span>能源类型</span><Picker aria-label="能源类型" value={m.debug.powertrain} onValue={v => { const powertrain = v as typeof m.debug.powertrain; m.setDebug(s => ({ ...s, powertrain })); }}>
+        <option value="bev">纯电</option><option value="reev">增程</option></Picker></label>
+      <label className="mapping-row"><span>充电状态</span><Picker aria-label="充电情景" value={m.debug.charging} onValue={v => { const charging = v as typeof m.debug.charging; m.setDebug(s => ({ ...s, charging })); }}>
+        <option value="unplugged">未插枪</option><option value="plugged">已插枪</option><option value="charging">充电中</option><option value="done">充电完成</option></Picker></label>
+      <div className="mapping-row"><span>行驶状态</span><div className="demo-driving"><span>{m.debug.driving ? '行驶中' : '已驻车'}</span>
+        <Switch label="模拟行驶" checked={m.debug.driving} action={() => m.setDebug(s => ({ ...s, driving: !s.driving }))} /></div></div>
+      <fieldset className="debug-grants"><legend>共享权限</legend><label><input type="checkbox" checked disabled />基础授权 · 解锁、闭锁</label>
+        {([['control', '车辆控制'], ['location', '车辆定位'], ['mileage', '里程能耗']] as const).map(([key, label]) => <label key={key}>
+          <input type="checkbox" checked={m.debug.grants[key]} onChange={e => m.setDebug(state => ({ ...state, grants: { ...state.grants, [key]: e.target.checked } }))} />{label}
+        </label>)}</fieldset>
+    <button type="button" className="btn secondary" onClick={close}>完成</button>
+  </Sheet>;
+}
+
 export function States() {
   const m = useModelContext();
   const [platform, setPlatform] = useState(Capacitor.getPlatform());
@@ -315,24 +353,6 @@ export function States() {
           <div><strong>操作结果待确认</strong><p>车端尚未返回回执，可刷新车况核对结果。</p></div>
         </div>
       </details>
-      {m.demo && <details className="diagnostic-fold diagnostic-demo">
-        <summary>演示情景<Icon name="chevrond" size={16} /></summary>
-        <div className="diagnostic-fold-body"><label className="mapping-row"><span>数据状态</span>
-      <Picker aria-label="数据状态" value={m.debug.scenario} onValue={v => { const scenario = v as typeof m.debug.scenario; m.setDebug(s => ({ ...s, scenario })); }}>
-        <option value="normal">正常</option><option value="stale">过期</option><option value="offline">断网</option><option value="pending">待确认</option></Picker></label>
-      <label className="mapping-row"><span>账号</span><Picker aria-label="账号情景" value={m.debug.account} onValue={v => { const account = v as typeof m.debug.account; m.setDebug(s => ({ ...s, account })); }}>
-        <option value="normal">正常</option><option value="expired">会话失效</option><option value="empty">无授权车辆</option></Picker></label>
-      <label className="mapping-row"><span>车型</span><Picker aria-label="车型" value={m.debug.powertrain} onValue={v => { const powertrain = v as typeof m.debug.powertrain; m.setDebug(s => ({ ...s, powertrain })); }}>
-        <option value="bev">纯电</option><option value="reev">增程</option></Picker></label>
-      <label className="mapping-row"><span>充电</span><Picker aria-label="充电情景" value={m.debug.charging} onValue={v => { const charging = v as typeof m.debug.charging; m.setDebug(s => ({ ...s, charging })); }}>
-        <option value="unplugged">未插枪</option><option value="plugged">已插枪</option><option value="charging">充电中</option><option value="done">充电完成</option></Picker></label>
-      <label className="debug-check"><input type="checkbox" checked={m.debug.driving} onChange={e => m.setDebug(s => ({ ...s, driving: e.target.checked }))} />行驶中</label>
-      <fieldset className="debug-grants"><legend>共享权限</legend><label><input type="checkbox" checked disabled />基础授权 · 解锁、闭锁</label>
-        {([['control', '车辆控制'], ['location', '车辆定位'], ['mileage', '里程能耗']] as const).map(([key, label]) => <label key={key}>
-          <input type="checkbox" checked={m.debug.grants[key]} onChange={e => m.setDebug(state => ({ ...state, grants: { ...state.grants, [key]: e.target.checked } }))} />{label}
-        </label>)}</fieldset>
-        </div>
-      </details>}
     </div>
   </div></>;
 }

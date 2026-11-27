@@ -94,9 +94,14 @@ export function Home({ active, modelSlot }: { active: boolean; modelSlot: RefObj
           <button className="name-btn" title="双击修改昵称" onDoubleClick={() => { setNickname(model.name); setEdit(true); }}>{model.name}</button>}
         <Link className="name-chev" to="/vehicles" aria-label="切换车辆"><Icon name="chevrond" size={17} /></Link></div>
         <div className="sub">{!model.simulated && model.scenario === 'stale' ? '上次车况' : '状态更新'} · {model.scenario === 'offline' ? (v.at || model.simulated ? '缓存' : '暂无车况') : model.simulated ? '今天 20:35' : stamp(v.at)}</div></div>
-        <div className="hero-tools"><button className="iconbtn" aria-label="刷新" aria-busy={model.refreshing} disabled={model.refreshing} onClick={() => void model.refresh(true)}><Icon name="refresh" size={18} /></button>
-          <span className={'hero-pill ' + (v.driving ? 'green' : '')}>{v.driving == null ? '状态未知' : v.driving ? '行驶中' : '已驻车'}</span>
-          <Link className={'hero-pill ' + (v.charging === 'charging' || v.charging === 'done' ? 'green' : '')} to="/charging">{chargeLabels[v.charging]}</Link>
+        <div className="hero-tools">
+          <div className="hero-status">
+            <span className="hero-state" data-active={v.driving || undefined}><i aria-hidden="true" />{v.driving == null ? '状态未知' : v.driving ? '行驶中' : '已驻车'}</span>
+            <Link className="hero-charge" data-active={v.charging === 'charging' || v.charging === 'done' || undefined} to="/charging">
+              <Icon name={v.charging === 'charging' ? 'bolt' : 'plug'} size={14} />{chargeLabels[v.charging]}</Link>
+          </div>
+          <button className="hero-refresh" aria-label="刷新" aria-busy={model.refreshing} disabled={model.refreshing}
+            onClick={() => void model.refresh(true)}><Icon name="refresh" size={17} /></button>
         </div>
       </header>
       <div className="hero-metrics">

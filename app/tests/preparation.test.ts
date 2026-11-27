@@ -16,8 +16,11 @@ const plan: PreparationPlan = { set_id: 'existing', enable: true, start_time: '2
 
 test('preparation sends one command containing only the chosen modules', () => {
   assert.deepEqual(encodeRemote({ kind: 'prepare', content }).id, 360);
-  assert.deepEqual(content.air_condition, { enable: true, temperature: '24', windlevel: '2', mode: 'nohotcold', operate: 'auto', circle: 'out' });
+  assert.deepEqual(content.air_condition, { enable: true, temperature: '24', windlevel: '2', mode: 'nohotcold', operate: 'manual', circle: 'out' });
   assert.deepEqual(Object.keys(content), ['syn_path', 'air_condition', 'seat_setting', 'steeringWheelHeatCtrl', 'rearMirrorHeating']);
+  assert.deepEqual(content.syn_path, {enable:true, addresskey:'', addressname:'公司', address:'科技路', latitude:'30', longitude:'120', linenum:'0'});
+  for (const ability of ['30', '180']) assert.ok(allowsPreparationContent({...vehicle, abilities:[ability]}, {syn_path: content.syn_path}, true, true));
+  assert.ok(!allowsPreparationContent({...vehicle, abilities:['170']}, {syn_path: content.syn_path}, true, true));
   assert.ok(allowsPreparationContent(vehicle, content, false, true));
   assert.ok(!allowsPreparationContent(vehicle, content, true, true));
   assert.ok(!allowsPreparationContent(vehicle, content, false, false));

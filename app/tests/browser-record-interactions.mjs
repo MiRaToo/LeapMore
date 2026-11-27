@@ -18,9 +18,14 @@ async function swipe(from, to, beforeEnd) {
 try {
   await b.send('Storage.clearDataForOrigin', { origin: new URL(app).origin, storageTypes: 'local_storage,indexeddb' });
   await b.navigate(app);
+  for (let i = 0; i < 50 && !await b.run('!!document.querySelector(".app-view")'); i++) await wait(100);
   await b.run(`localStorage.setItem('leapmore.mode', '"demo"'); localStorage.setItem('leapmore.activeVehicle', '"demo-c10"');`);
   await b.reload();
+  await route('/records-source');
+  assert.equal(await b.run("document.querySelector('.source-opt.on b')?.textContent"), '关闭记录');
+  await b.click('.source-opt:first-of-type');
   await route('/energy');
+  for (let i = 0; i < 50 && !await b.run('!!document.querySelector("[data-energy-card]")'); i++) await wait(100);
   assert.deepEqual(await b.run('[...document.querySelectorAll("[data-energy-card]")].map(card => card.dataset.energyCard)'),
     ['monthKm','weekKm','efficiency','rank','trend','totalDays','totalKm','totalKwh','breakdown','cost']);
   assert.equal(await b.run('document.querySelectorAll(".compact-metric .metric-label > svg").length'), 6);
@@ -28,7 +33,7 @@ try {
   await b.reload();
   await route('/energy');
   assert.equal(await b.run("JSON.parse(localStorage.getItem('leapmore.theme'))"), 'system');
-  assert.equal(await b.run("JSON.parse(localStorage.getItem('leapmore.source'))"), 'hybrid');
+  assert.equal(await b.run("JSON.parse(localStorage.getItem('leapmore.source'))"), 'phone');
   assert.ok(await b.run(`(() => {
     const series = document.querySelector('.trend-card .plot-series');
     return series && getComputedStyle(series).animationName === 'plot-reveal';
@@ -127,8 +132,92 @@ try {
   })()`));
   await route('/records');
   assert.equal(await b.run("document.querySelector('[aria-label=行程显示]').title"),'缩略图');
-  const period = async (kind, text) => b.run(`[...document.querySelectorAll('[aria-label=${kind}时间范围] button')].find(el=>el.textContent===${JSON.stringify(text)}).click()`);
-  await period('行程','全');
+  const period = async (kind, text) => {
+    await b.click('.record-range-toggle');
+    await b.run(`[...document.querySelectorAll('[aria-label=${kind}时间范围] button')].find(el=>el.textContent===${JSON.stringify(text)}).click()`);
+  };
+  assert.equal(await b.run("document.querySelector('.records-actions .record-range-toggle').getAttribute('aria-expanded')"),'false');
+  await b.click('#record-tab-1');
+  assert.ok(await b.run(`(() => {
+    const charge = document.querySelector('#record-tab-1'), trip = document.querySelector('#record-tab-0');
+    return charge.getAttribute('aria-selected') === 'true' && parseFloat(getComputedStyle(charge).fontSize) > parseFloat(getComputedStyle(trip).fontSize) &&
+      location.hash.includes('tab=charges') && !!document.querySelector('.records-actions [aria-label="充电显示"]');
+  })()`));
+  await b.run("document.querySelector('#record-tab-1').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}))");
+  assert.equal(await b.run("document.activeElement.id"),'record-tab-0');
+  await b.click('.record-range-toggle');
+  assert.deepEqual(await b.run("[...document.querySelectorAll('[aria-label=行程时间范围] button')].map(button=>button.textContent)"), ['最近','本周','本月','全部']);
+  await b.click('.record-range-toggle');
+  await period('行程','最近');
+  assert.ok(await b.run("!!document.querySelector('.record-meta time') && !document.querySelector('.record-panel h2')"));
+  assert.equal(await b.run("document.querySelectorAll('.amap-trip .amap-route').length"),1);
+  assert.equal(await b.run("document.querySelectorAll('.sample-soc-path').length"),1);
+  assert.equal(await b.run("document.querySelectorAll('.trip-row,.amap-bar').length"),0);
+  assert.equal(await b.run("document.querySelector('.range-menu')"),null);
+  assert.ok(await b.run("!!document.querySelector('.sample-curves .sample-temp-path') && !document.querySelector('.sample-card h3 svg')"));
+  await b.run("document.querySelector('.sample-timeline').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}))");
+  assert.equal(await b.run("document.querySelector('.sample-readout dl > div:nth-child(4) dd').textContent"), '15.5 °C');
+  assert.equal(await b.run("document.querySelectorAll('.sample-lane .chart-svg').length"), 3);
+  assert.ok(await b.run("document.querySelector('.trip-info').lastElementChild.matches('.trip-metrics-handle') && !document.querySelector('.trip-metrics-handle svg')"));
+  const handle = await b.run(`(() => {
+    const button = document.querySelector('.trip-metrics-handle');
+    button.scrollIntoView({block:'center'});
+    const rect = button.getBoundingClientRect();
+    return {x:rect.left + rect.width / 2,y:rect.top + rect.height / 2};
+  })()`);
+  await swipe(handle, {x:handle.x,y:handle.y+55});
+  assert.equal(await b.run("document.querySelector('.trip-metrics-handle').getAttribute('aria-expanded')"),'true');
+  const rows = () => b.run("Number(document.querySelector('.trip-metrics-extra').dataset.rows)");
+  assert.equal(await rows(),1);
+  assert.match(await b.run("document.querySelector('.trip-metrics-row[aria-hidden=false]').textContent"),/起始表显续航.*结束表显续航.*续航达成率/);
+  assert.ok(await b.run("document.querySelector('.trip-info > dl').nextElementSibling.matches('.trip-metrics-extra')"));
+  await b.click('.trip-metrics-handle');
+  assert.equal(await rows(),2);
+  assert.match(await b.run("document.querySelector('.trip-metrics-row:last-child').textContent"),/最高速度.*0 速时长/);
+  await b.click('[aria-label=地图设置]');
+  await b.run(`(() => { const input=document.querySelector('.amap-opacity input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'52');
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+  })()`);
+  assert.equal(await b.run("document.querySelector('.amap-opacity output').textContent"),'52%');
+  await route('/trips/demo-trip-1');
+  assert.equal(await b.run("document.querySelector('.trip-metrics-handle').getAttribute('aria-expanded')"),'true');
+  assert.equal(await b.run("document.querySelector('.amap-trip').style.getPropertyValue('--map-control-opacity')"),'0.52');
+  for (const path of ['/records?tab=charges','/charges/demo-charge-0']) {
+    await route(path);
+    assert.ok(await b.run("document.querySelector('.charge-info').firstElementChild.matches('dl') && !document.querySelector('.charge-info .pill')"));
+    assert.ok(await b.run(`(() => {
+      const map = document.querySelector('.record-detail-content .amap-record');
+      return map?.style.getPropertyValue('--map-control-opacity') === '0.52' &&
+        !!map.querySelector('[aria-label=充电位置]') && !map.querySelector('.amap-bar,.amap-route,.amap-tools-panel') &&
+        map.querySelectorAll('.amap-ctl > button').length === 2;
+    })()`));
+    await b.click('[aria-label=地图设置]');
+    assert.equal(await b.run("document.querySelector('.amap-opacity output').textContent"),'52%');
+    await b.click('[aria-label=放大]');
+    assert.equal(await b.run("document.querySelector('.amap-record').dataset.mapZoom"),'17.000');
+    await b.click('[aria-label=回到充电位置]');
+    assert.equal(await b.run("document.querySelector('.amap-record').dataset.mapZoom"),'16.000');
+  }
+  await route('/mine');
+  await b.run("[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='演示情景').click()");
+  await b.click('[aria-label=模拟行驶]');
+  await route('/records');
+  assert.match(await b.run("document.querySelector('.record-meta-status').textContent"),/正在记录行程/);
+  assert.match(await b.run("document.querySelector('.record-detail-content').textContent"),/实时车速48 km\/h/);
+  await route('/mine');
+  await b.run("[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='演示情景').click()");
+  await b.click('[aria-label=模拟行驶]');
+  await b.click('[aria-label=充电情景]');
+  await b.click('dialog[open] [data-value=charging]');
+  await route('/records?tab=charges');
+  assert.match(await b.run("document.querySelector('.record-meta-status').textContent"),/正在记录充电/);
+  assert.equal(await b.run("document.querySelectorAll('.record-detail-content .amap-view').length"),1);
+  assert.equal(await b.run("document.querySelectorAll('.record-detail-content .sample-timeline').length"),1);
+  assert.ok(await b.run("document.querySelectorAll('.charge-info').length === 1 && document.querySelectorAll('.record-detail-content .trip-info').length === 1 && !!document.querySelector('.charge-info .charge-place-detail')"));
+  assert.equal(await b.run("document.querySelectorAll('.sample-lane .chart-svg').length"),3);
+  await route('/records');
+  await period('行程','全部');
   await wait(100);
   assert.match(await b.run("document.querySelector('.record-total').textContent"), /^6 段/);
   assert.ok(await b.run(`(() => {
@@ -141,13 +230,9 @@ try {
   await b.click('.record-month > button');
   await b.click('.record-month .record-day > summary');
   assert.ok(await b.run("!!document.querySelector('.record-month .record-day[open] a[href*=trips]')"));
-  await period('行程','年');
-  await wait(100);
-  assert.ok(await b.run("!!document.querySelector('.record-month') && !document.querySelector('.record-month button[aria-expanded=true], .record-month .record-day')"));
-  assert.ok(await b.run("parseInt(document.querySelector('.record-total').textContent)<6"));
-  await swipe({x:270,y:250},{x:80,y:250});
+  await swipe({x:270,y:243},{x:80,y:243});
   await wait(150);
-  assert.equal(await b.run("document.querySelector('[aria-label=充电时间范围] [aria-pressed=true]')?.textContent"),'年');
+  assert.equal(await b.run("document.querySelector('.record-range-toggle').textContent"),'全部');
   await b.click('.record-month > button');
   assert.ok(await b.run(`(() => {
     const month = document.querySelector('.record-month');
@@ -155,10 +240,10 @@ try {
     return links.length === parseInt(month.querySelector('button > span').textContent) &&
       links.every(link => link.checkVisibility() && link.querySelector('.charge-thumbnail')) && !month.querySelector('.record-day summary');
   })()`));
-  await period('充电','全');
+  await period('充电','全部');
   await wait(100);
   assert.match(await b.run("document.querySelector('.record-total').textContent"), /^5 次/);
-  for (const range of ['周', '月']) {
+  for (const range of ['本周', '本月']) {
     await period('充电', range);
     await wait(100);
     assert.ok(await b.run(`(() => {
@@ -169,7 +254,7 @@ try {
   }
   await swipe({x:80,y:250},{x:270,y:250});
   await wait(150);
-  for (const range of ['周', '月']) {
+  for (const range of ['本周', '本月']) {
     await period('行程', range);
     await wait(100);
     assert.ok(await b.run(`(() => {
@@ -238,10 +323,10 @@ try {
   await route('/records-source');
   const defaultOption = () => b.run(`[...document.querySelectorAll('.source-opt')].filter(b => b.querySelector('.pill')?.textContent === '默认')
     .map(b => [b.querySelector('b').textContent, b.getAttribute('aria-pressed')])`);
-  assert.deepEqual(await defaultOption(), [['手机记录 + HA 同步', 'true']]);
+  assert.deepEqual(await defaultOption(), [['关闭记录', 'false']]);
   await b.run(`[...document.querySelectorAll('.source-opt')].find(b => b.querySelector('b').textContent === '手机记录').click()`);
   await b.reload();
-  assert.deepEqual(await defaultOption(), [['手机记录 + HA 同步', 'false']]);
+  assert.deepEqual(await defaultOption(), [['关闭记录', 'false']]);
   assert.equal(await b.run("document.querySelector('.source-opt[aria-pressed=true] b').textContent"), '手机记录');
   assert.deepEqual(b.errors, []);
   console.log('统计卡长按、普通滚动、图表入场、每日展开收起、导航隐藏和列表两端回弹通过。');

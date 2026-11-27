@@ -1,3 +1,4 @@
+import { readSetting, saveSetting } from '../../data/localDatabase';
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useModelContext } from '../context';
@@ -12,7 +13,7 @@ import type { PreparationPreset } from '../../data/cloud/preparation';
 import type { CabinHeater, ClimateMode, RemoteCommand } from '../../data/cloud/remote';
 import { reportedWindowPosition, weekdays } from '../../data/cloud/remote';
 
-import { climatePresets as presets, findClimatePreset } from '../../data/cloud/climatePresets';
+import { climatePresets as presets, findClimatePreset, quickClimatePreset } from '../../data/cloud/climatePresets';
 export { presets };
 type Climate = { on: boolean; temp: number; mode: ClimateMode; fan: number; seat: number; vent: number; preset: string };
 const windowChoices = ['closed', 'vent', 'half', 'full'] as const;
@@ -48,11 +49,20 @@ function preparationSettings(climate: Climate, preset: PreparationPreset) {
   return { climate: prepared, ...(preset.steering && { steeringHeat: true }), ...(preset.mirrors && { mirrorHeat: true }) };
 }
 
+type VehicleSettings = Record<string, typeof initial>;
+const demoStorage = 'native-demo-controls';
+const nativeDemoPlatform = () => ['android', 'ios'].includes(Capacitor.getPlatform());
+const readDemoControls = () => readSetting<VehicleSettings>(demoStorage, {});
+
 function useControlsModel() {
   const model = useModelContext();
   const cmd = useCommands();
-  const [settingsByVehicle, setSettings] = useState<Record<string, typeof initial>>({});
-  const settings = settingsByVehicle[model.vehicleId] ?? initial;
+  const [settingsByVehicle, setSettings] = useState<VehicleSettings>({});
+  const [demoSettings, setDemoSettings] = useState<VehicleSettings>(readDemoControls);
+  const [demoLoaded, setDemoLoaded] = useState(false);
+  const nativeDemo = model.simulated && nativeDemoPlatform();
+  const demoControlsReady = !nativeDemo || demoLoaded;
+  const settings = (nativeDemo ? demoSettings : settingsByVehicle)[model.vehicleId] ?? initial;
   const [sheet, setSheet] = useState<'seat' | 'windows' | 'presets' | null>(null);
   const current = model.current;
   const targetTemp = model.simulated ? settings.climate.temp : current.climateTemp;
@@ -78,31 +88,44 @@ function useControlsModel() {
   const trunkTitle = trunk ? '关闭后备箱' : '打开后备箱';
   function patch(update: Partial<typeof initial>) {
     const id = model.vehicleId;
-    setSettings(records => ({ ...records, [id]: { ...(records[id] ?? initial), ...update } }));
+    const apply = (records: VehicleSettings) => ({ ...records, [id]: { ...(records[id] ?? initial), ...update } });
+    if (nativeDemo) {
+      const next = apply(readDemoControls());
+      saveSetting(demoStorage, next);
+      setDemoSettings(next);
+    } else setSettings(apply);
   }
   function applyPreparation(preset: PreparationPreset) { patch(preparationSettings(climate, preset)); }
   useEffect(() => {
-    if (!model.booted || model.mode !== 'demo' || !['ios','android'].includes(Capacitor.getPlatform())) return;
+    if (!model.booted || !nativeDemo) { setDemoLoaded(false); return; }
+    let mounted = true;
     const apply = async () => {
       const effects = await widgetBridge.takeDemo().catch(() => []);
-      if (!effects.length) return;
-      setSettings(previous => {
-        const next = { ...previous };
+      const next = readDemoControls();
+      if (effects.length) {
         for (const { vehicleId, action, preset } of effects) {
           const before = next[vehicleId] ?? initial;
           if (action === 'lock-only') next[vehicleId] = { ...before, locked: true };
           if (action === 'climate-on' || action === 'climate-off') next[vehicleId] = { ...before, climate: { ...before.climate, on: action === 'climate-on' } };
+          if (action === 'window-close' || action === 'window-vent') next[vehicleId] = { ...before, window: action === 'window-close' ? 'closed' : 'vent' };
+          const selected = quickClimatePreset(action);
+          if (selected) next[vehicleId] = { ...before, climate: { ...before.climate, ...selected[2], on: true, preset: selected[0] } };
           if (preset && (action === 'prepare' || action === 'prepare-2')) next[vehicleId] = { ...before, ...preparationSettings(before.climate, preset) };
         }
-        return next;
-      });
+        saveSetting(demoStorage, next);
+      }
+      if (mounted) { setDemoSettings(next); setDemoLoaded(true); }
     };
     const visible = () => { if (!document.hidden) void apply(); };
     visible();
+    const changed = (event: StorageEvent) => {
+      if (event.key === 'leapmore.' + demoStorage) setDemoSettings(readDemoControls());
+    };
+    globalThis.addEventListener('storage', changed);
     const listener = NativeApp.addListener('appStateChange', e => { if (e.isActive) visible(); });
     document.addEventListener('visibilitychange', visible);
     globalThis.addEventListener('focus', visible);
-    return () => { void listener.then(l => l.remove()); document.removeEventListener('visibilitychange', visible); globalThis.removeEventListener('focus', visible); };
+    return () => { mounted = false; globalThis.removeEventListener('storage', changed); void listener.then(l => l.remove()).catch(() => {}); document.removeEventListener('visibilitychange', visible); globalThis.removeEventListener('focus', visible); };
   }, [model.mode, model.booted]);
   function toggleSentry(on: boolean, stillRequested?: () => boolean, onComplete?: () => void) {
     cmd.ask({ kind: 'sentry', title: (on ? '开启' : '关闭') + '哨兵模式', icon: 'shield',
@@ -170,7 +193,7 @@ function useControlsModel() {
     cmd.ask({ kind: 'charge', title, icon: 'plug', description, remote, onComplete, apply: () => patch(update) });
   }
   function find() { cmd.ask({ kind: 'find', title: '鸣笛寻车', icon: 'carHorn', description: '车辆将闪灯并鸣笛。', remote: { kind: 'find' } }); }
-  return { ...cmd, settings, toggleSentry, applyPreparation, setDoorLock, setClimatePower, climate, targetTemp, heating, hasCabinHeating, hasComfort, toggleHeater, sheet, setSheet, locked, lockTitle, climateOn, climateTitle, trunk, trunkTitle,
+  return { ...cmd, demoControlsReady, settings, toggleSentry, applyPreparation, setDoorLock, setClimatePower, climate, targetTemp, heating, hasCabinHeating, hasComfort, toggleHeater, sheet, setSheet, locked, lockTitle, climateOn, climateTitle, trunk, trunkTitle,
     window, windowPosition, windowOpen, shadeOpen, lock, toggleTrunk, setWindow, shade, toggleClimate, sendClimate, preset, seat, charging, find };
 }
 const Controls = createContext<ReturnType<typeof useControlsModel> | null>(null);

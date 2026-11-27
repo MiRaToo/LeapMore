@@ -33,6 +33,8 @@ export interface CarState {
   vehicleId: string;
   updatedAt: number;
   reportedAt?: number | null;
+  /** Collection time on legacy T03 reports that omit the vehicle timestamp. */
+  recordingFallbackAt?: number;
   freshness: Freshness;
   soc: number | null;
   rangeKm: number | null;

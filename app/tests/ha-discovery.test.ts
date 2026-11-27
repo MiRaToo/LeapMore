@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { discoverVehicles, vehicleByVin } from '../src/data/ha/discovery.ts';
 import type { RegisteredEntity } from '../src/data/ha/discovery.ts';
-import { framesOf, lowestBatteryTemperature, openingOf } from '../src/data/ha/measurements.ts';
+import { batteryTemperatureSamples, framesOf, lowestBatteryTemperature, openingOf } from '../src/data/ha/measurements.ts';
 import { samplesOf } from '../src/data/ha/schema.ts';
 
 const vin = 'LFB1A2B3C4D000001', secondVin = 'LFB1A2B3C4D000002';
@@ -33,6 +33,8 @@ test('charge temperatures use recorded battery attributes within the session, in
   const entries = [-8, 0, -2, null, -9].map((temperature, i) => ({ entity: entity, at: i + 1,
     state: '53', attrs: { battery_min_temp: temperature } }));
   const frames = framesOf(entries, { batteryMinTemp: { entity, attribute: 'battery_min_temp' } });
+  assert.deepEqual(batteryTemperatureSamples([...frames, { at: 4, data: { batteryMinTemp: -8 }, changed: ['speed'] }], 2, 4),
+    [{ at: 2, value: 0 }, { at: 3, value: -2 }, { at: 4, value: null }]);
   assert.equal(lowestBatteryTemperature(frames, 2, 4), -2);
   assert.equal(lowestBatteryTemperature(frames, 2, 2), 0);
   assert.equal(lowestBatteryTemperature([...frames, { at: 4, data: { batteryMinTemp: -8 }, changed: ['speed'] }], 4, 4), null);

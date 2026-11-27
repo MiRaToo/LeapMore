@@ -5,7 +5,6 @@ import { haChargeSessions, haOlderChargeSessions } from '../../data/ha/ledger';
 import { chargeCostTotals, chargeWindowStart } from '../../data/tariff';
 import { combineCharges } from '../../data/combinedRecords';
 import { Seg } from '../../ui/components';
-import { Icon } from '../../ui/Icon';
 import { useModelContext } from '../context';
 import { useDailyPlot } from './useDailyPlot';
 import { useChartReveal } from './useChartReveal';
@@ -26,12 +25,11 @@ export function useExpenseCharges(m: ReturnType<typeof useModelContext>, days: n
     enabled: useHA && days === 90, retry: false, staleTime: 120_000,
   });
   const charges = useMemo(() => {
-    if (!m.usesHA || m.simulated && m.usesPhone || !m.canSee('mileage')) return m.records.charges;
-    const latest = recent.data ?? m.ha.records.charges;
-    const rows = days !== 90 || !older.data ? latest :
-      [...new Map([...older.data.charges, ...latest].map(charge => [charge.id, charge])).values()];
-    return m.source === 'hybrid' ? combineCharges(m.cloudRecords.charges, rows).charges : rows;
-  }, [days, m.usesHA, m.usesPhone, m.simulated, m.grants.mileage, m.expired, m.vehicle, m.source, m.records.charges, m.ha.records.charges, m.cloudRecords.charges, recent.data, older.data]);
+    if (!useHA || m.simulated) return m.records.charges;
+    const rows = [...new Map([...(days === 90 && older.data ? older.data.charges : []),
+      ...m.ha.records.charges, ...(recent.data ?? [])].map(charge => [charge.id, charge])).values()];
+    return combineCharges(m.cloudRecords.charges, rows).charges;
+  }, [days, useHA, m.simulated, m.records.charges, m.ha.records.charges, m.cloudRecords.charges, recent.data, older.data]);
   const partial = m.usesHA && useHA && (recent.isError ||
     (days === 90 && !older.isFetching && (older.isError || older.data?.coverage !== 'complete')));
   return { charges, partial, loading: useHA && (recent.isFetching || days === 90 && older.isFetching) };
@@ -75,7 +73,7 @@ export function ExpenseCard({ active }: { active: boolean }) {
   const maximum = Math.max(1, ...samples.map(day => day.total ?? 0));
   const barWidth = Math.max(1, Math.min(18, spacing * .6));
   return <section className="card chart-card expense-card" id="expense-statistics" tabIndex={-1}>
-    <div className="chart-head"><h3><Icon name="bolt" size={15} />{totals.manualCount ? '充电费用' : '充电费用估算'}</h3>
+    <div className="chart-head"><h3>{totals.manualCount ? '充电费用' : '充电费用估算'}</h3>
       <Seg options={[[7, '7 天'], [30, '30 天'], [90, '90 天']]} current={days} choose={setDays} label="费用统计范围" />
     </div>
     <ExpenseTotals totals={totals} />

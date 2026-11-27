@@ -6,8 +6,35 @@ import Foundation
 final class LeapTripPlugin: CAPPlugin, CAPBridgedPlugin {
     let identifier = "LeapTripPlugin"
     let jsName = "LeapTrip"
-    let pluginMethods: [CAPPluginMethod] = ["configure", "reading", "state", "start", "stop", "batch", "ack", "clear"].map {
+    let pluginMethods: [CAPPluginMethod] = ["configure", "reading", "state", "start", "stop", "batch", "ack", "clear", "pendingShortcut", "applyShortcut"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
+    }
+
+    override func load() {
+        DispatchQueue.main.async {
+            RecordingShortcutRequest.notify = { [weak self] in self?.notifyListeners("recordingShortcut", data: [:]) }
+        }
+    }
+
+    @objc func pendingShortcut(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let request = RecordingShortcutRequest.current else { call.resolve(); return }
+            call.resolve(["id": request.id, "target": request.target, "start": request.start])
+        }
+    }
+
+    @objc func applyShortcut(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let request = RecordingShortcutRequest.current, request.id == call.getString("id") else {
+                call.reject("快捷指令已失效"); return
+            }
+            if let issue = call.getString("issue") {
+                request.finish(id: request.id, error: issue)
+                call.reject(issue); return
+            }
+            do { try request.apply(demo: call.getBool("demo") == true); call.resolve() }
+            catch { request.finish(id: request.id, error: error.localizedDescription); call.reject(error.localizedDescription) }
+        }
     }
 
     @objc func configure(_ call: CAPPluginCall) {

@@ -18,6 +18,7 @@ let pinCode = 0, commandStatus = 'pending', commandHttpStatus = 200, gear = 0;
 let t03 = '', routeRequests = 0, regionReads = 0;
 const carHosts = ['appuser.leapmotor.cn', 'app-gw-global-master.leapmotor.com', 'appgateway.leapmotor.com'];
 const marketHosts = ['www-app.leapmotor.com', 'apptec.leapmotor.cn', 'ueapp.oss-cn-hangzhou.aliyuncs.com', 'carod-center.leapmotor.cn', 'ueapp-oss-static.leapmotor.com'];
+let searchCity, searchLocation;
 const amapAddress = '上海市浦东新区锦绣路100号验收车位';
 const hybridHA = process.env.LEAPMORE_HYBRID_HA_TEST_ORIGIN;
 const greenRender = 'https://ueapp-oss-static.leapmotor.com/fixture-green.png';
@@ -65,9 +66,15 @@ async function open() {
     let data = {}, status = 200, code, binary, payload, contentType;
     if (request.method === 'OPTIONS') status = 204;
     else if (rejectSession && ['/signal/info/query', '/account/v1/login', '/appuseroperate/getnewtoken'].some(suffix => path.endsWith(suffix))) code = 302002004;
-    else if (url.hostname === 'restapi.amap.com' && path.endsWith('/regeo')) payload = { status:'1', regeocode:{ formatted_address:amapAddress } };
-    else if (url.hostname === 'restapi.amap.com' && path.endsWith('/inputtips')) payload = { status:'1', tips:[{
+    else if (url.hostname === 'restapi.amap.com' && path.endsWith('/regeo')) payload = { status:'1', regeocode:{ formatted_address:amapAddress, addressComponent:{citycode:'021'} } };
+    else if (url.hostname === 'restapi.amap.com' && path.endsWith('/around')) payload = {status:'1', pois:[{
+      id:'nearby', name:'验收附近车站', cityname:'上海市', adname:'浦东新区', location:'121.471,31.231' }]};
+    else if (url.hostname === 'restapi.amap.com' && path.endsWith('/inputtips')) {
+      searchCity = url.searchParams.get('city');
+      searchLocation = url.searchParams.get('location');
+      payload = { status:'1', tips:[{
       id:'mock-library', name:'验收图书馆', district:'上海市浦东新区', address:'锦绣路200号', location:'121.471,31.231' }] };
+    }
     else if (path.endsWith('/sendmessagecode')) requests.sms++;
     else if (path.endsWith('/check_login_with_phone')) {
       requests.signIn++;
@@ -233,8 +240,9 @@ async function open() {
   return tab;
 }
 
-async function text(tab, pattern) {
-  for (let attempt = 0; attempt < 60; attempt++) {
+async function text(tab, pattern, timeoutMs = 7500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     const visible = await tab.run('document.body.innerText');
     if (pattern.test(visible)) return;
     await wait(125);
@@ -292,6 +300,13 @@ try {
   await text(tab, /选择电池容量/);
   await chooseC10Pack(tab);
   await click(tab, '保存并进入');
+  await text(tab, /73%/);
+  await tab.run('location.hash="/records-source"');
+  await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "关闭记录"');
+  assert.equal(chargeRequests, 0);
+  await tab.click('.source-opt:first-of-type');
+  await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "手机记录"');
+  await tab.run('location.hash="/home"');
   await text(tab, /73%/);
   if (!zip) {
     await until(tab, `document.querySelector('.home-model[data-model-status="2d"] img')?.currentSrc === ${JSON.stringify(ownerPicture)}`);
@@ -471,7 +486,7 @@ try {
   assert.deepEqual(remoteWrites.at(-1), ['400', {value:'on'}]);
   boundOwner = false;
   commandStatus = 'success';
-  await click(tab, '立即备车');
+  await click(tab, '日常通勤');
   await until(tab, '!!document.querySelector("dialog [aria-label=零跑操作密码]")');
   await confirmControl();
   await text(tab, /车端已确认/);
@@ -520,6 +535,7 @@ try {
   await text(tab, /预约备车已更新/);
   await until(tab, '!document.querySelector(".cmd-sheet")');
   assert.equal(preparationPlans.length, 0);
+  await until(tab, '!!document.querySelector(".prep-schedules")');
   await tab.click('.prep-schedules [aria-label=关闭]');
   commandStatus = 'pending';
   await tab.run('location.hash="/climate"');
@@ -556,7 +572,7 @@ try {
   await text(tab, /23.5 kWh/);
   assert.equal(await tab.run('document.querySelectorAll(".record-panel .trip-row").length'), 2);
   assert.match(await tab.run('document.querySelector(".record-panel .trip-row .charge-place-value").textContent'), /31\.12345, 121\.23456/);
-  assert.equal(chargeRequests, 6);
+  assert.equal(chargeRequests, 4);
   await tab.click('.record-panel .trip-row');
   await text(tab, /充电详情/);
   await text(tab, /23\.5\s*kWh/);
@@ -715,13 +731,13 @@ try {
   await text(tab, /进入车辆/);
   await click(tab, '进入车辆');
   await text(tab, /42%/);
-  await tab.run('location.hash="/states"');
+  await tab.run('location.hash="/mine"');
   await text(tab, /演示情景/);
-  await tab.click('.diagnostic-demo > summary');
-  await tab.run(`(() => {
-    const state = document.querySelector('[aria-label="数据状态"]');
-    state.value = 'offline'; state.dispatchEvent(new Event('change', { bubbles: true }));
-  })()`);
+  await click(tab, '演示情景');
+  await tab.click('[aria-label="数据状态"]');
+  await tab.click('dialog[open] [data-value=offline]');
+  await tab.run('location.hash="/states"');
+  await text(tab, /常见问题与处理/);
   await tab.click('.diagnostic-folds > details:first-child > summary');
   await click(tab, '重新登录');
   await text(tab, /使用演示账号/);
@@ -814,14 +830,18 @@ try {
   await click(tab, '导航');
   assert.match(await tab.run('window.amapOpened'), /^https:\/\/uri\.amap\.com\/navigation\?.*callnative=1/);
   await click(tab, '管理');
-  await fill(tab, '名称', '常去处');
-  await fill(tab, '地址', '图书馆');
+  await click(tab, '新增地址');
+  await text(tab, /验收附近车站/);
+  await fill(tab, '搜索地址', '图');
   await text(tab, /验收图书馆/);
-  await tab.click('.address-suggestions .row');
-  await click(tab, '添加常用地址');
+  assert.equal(searchCity, '021');
+  assert.match(searchLocation, /^121\.\d+,31\.\d+$/);
+  await tab.click('[aria-label="选择验收图书馆"]');
+  await fill(tab, '名称', '常去处');
+  await click(tab, '保存地址');
   assert.deepEqual(await tab.run("Object.values(JSON.parse(localStorage.getItem('leapmore.favorites.v2')))[0].at(-1).point"),
     { lat:31.231, lon:121.471, poiId:'mock-library' });
-  await tab.click('dialog [aria-label="关闭"]');
+  await click(tab, '完成');
   await tab.run(`location.hash="/trips/live-${sampleStart + 6000}"`);
   await text(tab, /估算耗电/);
   await text(tab, new RegExp(amapAddress));
@@ -939,19 +959,47 @@ try {
     await tab.run('location.hash="/records"');
     await until(tab, 'document.querySelectorAll(".trip-row").length === 2');
     assert.equal(await tab.run('document.querySelectorAll(".trip-row[href*=same-drive]").length'), 1);
+    const visibleRows = () => tab.run('[...document.querySelectorAll(".trip-row")].map(el => el.getAttribute("href")).sort()');
+    const savedTrips = await visibleRows();
     await tab.run('location.hash="/records?tab=charges"');
     await until(tab, 'document.querySelectorAll(".trip-row[href*=same-charge]").length === 1');
     assert.equal(await tab.run('document.querySelectorAll(".trip-row[href*=sampled-charge]").length'), 0);
+    const savedCharges = await visibleRows();
     await tab.run(`location.hash="/trips/live-${sampleStart + 6000}"`);
     await until(tab, 'document.querySelector(".appbar .src-badge")?.textContent === "HA"');
     await tab.run(`location.hash="/charges/sampled-charge-${sampleStart + 28000}"`);
     await until(tab, 'document.querySelector(".appbar .src-badge")?.textContent === "HA"');
     const setHA = mode => fetch(hybridHA + '/fixture-mode?mode=' + mode, { method:'POST' });
+    const chooseSource = async label => {
+      await tab.run('location.hash="/records-source"');
+      await until(tab, '!!document.querySelector(".source-opt")');
+      await tab.run(`[...document.querySelectorAll('.source-opt')].find(el => el.querySelector('b').textContent === ${JSON.stringify(label)}).click()`);
+    };
+    await chooseSource('HA 同步');
+    await tab.run('location.hash="/records?tab=charges"');
+    await until(tab, 'document.querySelectorAll(".trip-row").length === ' + savedCharges.length);
+    assert.deepEqual(await visibleRows(), savedCharges);
+    await chooseSource('关闭记录');
+    const counters = async () => {
+      const {trips, charges, history} = await (await fetch(hybridHA + '/fixture-stats')).json();
+      return [trips, charges, history, chargeRequests];
+    };
+    const before = await counters();
+    await tab.run('location.hash="/records"'); await tab.reload();
+    await until(tab, 'document.querySelectorAll(".trip-row").length === ' + savedTrips.length);
+    assert.deepEqual(await visibleRows(), savedTrips);
+    await tab.run('location.hash="/records?tab=charges"');
+    await until(tab, 'document.querySelectorAll(".trip-row").length === ' + savedCharges.length);
+    assert.deepEqual(await visibleRows(), savedCharges);
+    await tab.run(`location.hash="/trips/live-${sampleStart + 6000}"`);
+    await until(tab, 'document.querySelector(".appbar .src-badge")?.textContent === "HA"');
+    assert.deepEqual(await counters(), before, '只读历史不应触发行程、充电或采样同步');
+    await chooseSource('手机记录 + HA 同步');
     await setHA('offline');
     await tab.run('location.hash="/ha"');
     await text(tab, /立即同步/);
     await click(tab, '立即同步');
-    await text(tab, /连接中断|服务暂不可用/);
+    await text(tab, /连接中断|服务暂不可用|LeapToHA 行程和充电记录暂不可用/, 40_000);
     await tab.run('location.hash="/records"');
     await until(tab, 'document.querySelectorAll(".trip-row").length === 2');
     await setHA('normal');
@@ -973,6 +1021,7 @@ try {
     return {x: left + width / 2, y: top + height / 2};
   })()`);
   const longPressTrip = async () => {
+    await tab.send('Page.bringToFront');
     await tab.send('Input.dispatchTouchEvent', { type:'touchStart', touchPoints:[rowPoint] });
     await text(tab, /确认删除/);
     await tab.send('Input.dispatchTouchEvent', { type:'touchEnd', touchPoints:[] });
@@ -1000,8 +1049,13 @@ try {
     await tab.run('location.hash="/records"');
   }
   await tab.reload();
-  await text(tab, /暂无行程记录/);
-  assert.equal(await tab.run('document.querySelectorAll(".trip-row").length'), 0);
+  if (hybridHA) {
+    await until(tab, '!!document.querySelector(".trip-row[href*=ledger-test]")');
+    assert.equal(await tab.run('document.querySelectorAll(".trip-row[href*=same-drive]").length'), 0);
+  } else {
+    await text(tab, /暂无行程记录/);
+    assert.equal(await tab.run('document.querySelectorAll(".trip-row").length'), 0);
+  }
   await tab.run('location.hash="/home"');
   await until(tab, '!!document.querySelector(".hero-tools button:not(:disabled)")');
   recordSignals = { ...recordSignals, 1816: 0, 1624: 15, 49: 0, 50: 1, 2100: 0, 1349: 31, 2183: 0, 2184: '23.5' };

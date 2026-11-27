@@ -1,17 +1,20 @@
 import { noteRecording, recordingScope } from './recordingDiagnostics';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { focusManager } from '@tanstack/react-query';
 import { hasBackgroundRecorder, recorder } from '../platform/recorder';
 
-export function useBackgroundVehicleRecorder(scope: string, delay: number, poll: () => Promise<boolean>) {
+export function useBackgroundVehicleRecorder(scope: string, selection: { scope: string } | null, chosePhoneRecording: boolean,
+  delay: number, poll: () => Promise<boolean>) {
   const [activeScope, setActiveScope] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [lastPoll, setLastPoll] = useState<{ scope: string; at: number }>();
   const supported = hasBackgroundRecorder();
   const requested = useRef('');
-  const current = useRef({ scope, poll });
-  useLayoutEffect(() => { current.current = { scope, poll }; }, [scope, poll]);
+  const current = useRef({ scope, poll, delay });
+  const handledSelection = useRef<typeof selection>(null);
+  const revision = useRef(0);
+  useLayoutEffect(() => { current.current = { scope, poll, delay }; }, [scope, poll, delay]);
 
   useEffect(() => {
     if (!supported) return;
@@ -27,12 +30,11 @@ export function useBackgroundVehicleRecorder(scope: string, delay: number, poll:
       }
     });
     const status = recorder.addListener('status', result => {
+      const session = current.current.scope;
+      if (!session || (result.scope && result.scope !== recordingScope(session))) return;
       if (result.running) {
-        if (!requested.current || requested.current !== current.current.scope) {
-          void recorder.stop({ reason: 'scope-change' }).catch(() => {});
-          return;
-        }
-        setActiveScope(requested.current);
+        if (requested.current !== session) return;
+        setActiveScope(session);
         setNotice('后台车况轮询已启动。');
       } else {
         requested.current = '';
@@ -48,20 +50,15 @@ export function useBackgroundVehicleRecorder(scope: string, delay: number, poll:
     };
   }, [supported]);
 
-  useEffect(() => {
-    if (requested.current && requested.current !== scope) {
-      requested.current = '';
-      void recorder.stop({ reason: 'scope-change' }).catch(() => {});
-    }
-  }, [scope]);
-
   const active = !!scope && activeScope === scope;
   useEffect(() => {
     if (active) void recorder.setDelay({ delay }).catch(() => {});
   }, [active, delay]);
 
-  async function setActive(value: boolean) {
-    if (!supported || busy || (value && !scope)) return;
+  const setActive = useCallback(async (value: boolean) => {
+    const { scope, delay } = current.current;
+    if (!supported || !scope || (value && requested.current === scope)) return;
+    const request = ++revision.current;
     setBusy(true);
     setNotice('');
     try {
@@ -72,14 +69,49 @@ export function useBackgroundVehicleRecorder(scope: string, delay: number, poll:
       } else {
         requested.current = '';
         await recorder.stop();
-        setActiveScope('');
+        if (revision.current === request) setActiveScope('');
       }
     } catch {
+      if (revision.current === request) {
+        requested.current = '';
+        setActiveScope('');
+        setNotice('无法切换后台车况轮询，请让应用在前台后重试。');
+      }
+    } finally { if (revision.current === request) setBusy(false); }
+  }, [supported]);
+
+  useEffect(() => {
+    if (!supported) return;
+    const request = ++revision.current;
+    let live = true;
+    const previous = requested.current;
+    const switching = !!previous && previous !== scope;
+    if (switching) {
       requested.current = '';
       setActiveScope('');
-      setNotice('无法切换后台车况轮询，请让应用在前台后重试。');
-    } finally { setBusy(false); }
-  }
+    }
+    setBusy(false);
+    setNotice('');
+    async function applySource() {
+      if (switching) await recorder.stop({ reason: 'scope-change' }).catch(() => {});
+      if (!scope || !live || request !== revision.current || current.current.scope !== scope) return;
+      const state = await recorder.getDiagnostics({ scope: recordingScope(scope) }).catch(() => undefined);
+      if (!live || request !== revision.current || current.current.scope !== scope) return;
+      const selected = selection?.scope === scope && selection !== handledSelection.current;
+      handledSelection.current = selection;
+      if (state?.running) {
+        requested.current = scope;
+        setActiveScope(scope);
+        return;
+      }
+      // An explicit source selection resumes recording after a manual or notification stop.
+      const last = state?.sessions?.at(-1);
+      // Older releases persisted "hybrid" even when the source picker had never been used.
+      if (selected || ((chosePhoneRecording || last) && last?.reason !== 'user' && last?.reason !== 'notification')) await setActive(true);
+    }
+    void applySource();
+    return () => { live = false; };
+  }, [scope, selection, chosePhoneRecording, supported, setActive]);
 
   return { active, busy, notice, supported, setActive, lastPollAt: lastPoll?.scope === scope ? lastPoll.at : undefined };
 }

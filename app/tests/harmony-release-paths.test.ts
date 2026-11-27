@@ -17,6 +17,11 @@ test('release gate accepts clean archives and rejects paths without exposing the
     assert.equal(spawnSync('zip', ['-q', 'leak.hap', 'leak.txt'], { cwd: dir }).status, 0);
     assert.throws(() => verifyHarmonyReleasePaths(join(dir, 'leak.hap')), (error: Error) =>
       error.message.includes('leak.txt') && !error.message.includes(privatePath));
+    const compilerFlags = '-ffile-prefix-map=/private/var/folders/xx/example/T/build=.';
+    writeFileSync(join(dir, 'flags.txt'), compilerFlags);
+    assert.equal(spawnSync('zip', ['-q', 'flags.hap', 'flags.txt'], { cwd: dir }).status, 0);
+    assert.throws(() => verifyHarmonyReleasePaths(join(dir, 'flags.hap')), (error: Error) =>
+      error.message.includes('flags.txt') && !error.message.includes('/var/folders/'));
     assert.throws(() => verifyHarmonyReleasePaths(join(dir, 'missing.hap')));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

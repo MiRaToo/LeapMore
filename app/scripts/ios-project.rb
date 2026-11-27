@@ -18,7 +18,7 @@ def add_source(group, target, path)
 end
 
 shared_widget_sources = %w[VehicleActionIntent.swift LeapWidgetStorage.swift QuickVehicleIntent.swift DirectQuickRuntime.swift]
-(%w[LeapPlugins.swift LeapTripPlugin.swift TripRecorder.swift TripRecordingStore.swift] + shared_widget_sources).each do |name|
+(%w[LeapPlugins.swift LeapCheckInPlugin.swift LeapTripPlugin.swift TripRecorder.swift TripRecordingStore.swift VehicleShortcuts.swift RecordingShortcuts.swift] + shared_widget_sources).each do |name|
   FileUtils.cp(File.join(native, name), File.join(project_root, 'App'))
   add_source(app_group, main, name)
 end

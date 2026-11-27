@@ -6,13 +6,24 @@ import { AppBar, Row, Section, Sheet } from '../../ui/components';
 import { permitsCommand, preparationContent, allowsPreparationContent } from '../../data/cloud/preparation';
 import { readSetting, saveSetting } from '../../data/localDatabase';
 import { widgetBridge } from '../../platform/widgets';
+import { Capacitor } from '@capacitor/core';
+import { applyRecordingShortcut, supportsManualTrips, usePendingRecordingShortcut } from '../../platform/iosTrip';
 import { loadPreparationPresets, presetSummary } from './PreparationPresets';
 import { useVehicleControls } from './controls';
 
+import { quickClimatePreset } from '../../data/cloud/climatePresets';
+
 const slots = {
-  prepare: '一键备车', 'climate-on': '开启空调', 'climate-off': '关闭空调', 'lock-only': '锁车', find: '鸣笛寻车', 'prepare-2': '一键备车 2',
+  prepare: '一键备车', 'climate-on': '开启空调', 'climate-off': '关闭空调', 'lock-only': '锁车', find: '鸣笛寻车', 'window-close': '关闭车窗', 'window-vent': '车窗通风',
+  'climate-cool': '极速降温', 'climate-heat': '极速升温', 'climate-vent': '快速除味', 'climate-def': '风挡除霜', 'prepare-2': '一键备车 2',
 } as const;
 type Slot = keyof typeof slots;
+const groups = [
+  { title: '备车', slots: ['prepare', 'prepare-2'] },
+  { title: '空调', slots: ['climate-on', 'climate-off', 'climate-cool', 'climate-heat', 'climate-vent', 'climate-def'] },
+  { title: '车窗', slots: ['window-close', 'window-vent'] },
+  { title: '车锁与寻车', slots: ['lock-only', 'find'] },
+] as const satisfies readonly { title: string; slots: readonly Slot[] }[];
 const slotNames = Object.keys(slots) as Slot[];
 const validSlot = (key: string | null): key is Slot => !!key && Object.hasOwn(slots, key);
 const prepareSlot = (slot: Slot) => slot === 'prepare' || slot === 'prepare-2';
@@ -54,6 +65,26 @@ export function PublishQuickControls() {
   }));
   const payload = JSON.stringify({ targets, tiles });
   useEffect(() => { if (m.booted) void widgetBridge.publishQuick(JSON.parse(payload)); }, [payload, m.booted]);
+  const request = usePendingRecordingShortcut();
+  const handled = useRef('');
+  useEffect(() => {
+    if (!request || handled.current === request.id || !m.booted) return;
+    const car = cars.find(car => car.id === request.target);
+    const recorder = m.manualTrip;
+    let issue: string | undefined;
+    if (!car) issue = '绑定的车辆已不可用，请重新选择车辆';
+    else if (car.car.id !== m.vehicleId) { m.setVehicleId(car.car.id); return; }
+    else if (!m.usesPhone) issue = '请先在记录数据源中启用手机记录';
+    else if (!m.grants.mileage || !recorder.available) issue = '当前账号没有这辆车的记录权限';
+    else if (recorder.busy || !recorder.state && !recorder.issue) return;
+    else if (!recorder.state) issue = recorder.issue;
+    else if (recorder.active && recorder.state.vehicleId !== car.car.id) issue = '正在记录另一辆车，请先结束该车的记录';
+    handled.current = request.id;
+    const binding = 'binding' in recorder ? recorder.binding : undefined;
+    void applyRecordingShortcut(request, m.simulated, issue, binding).then(() => {
+      if ('setDemoRecording' in recorder) recorder.setDemoRecording(request.start);
+    }).catch(() => {}); // The native intent returns the error to Shortcuts.
+  }, [request, m, cars]);
   return null;
 }
 
@@ -63,6 +94,7 @@ export function QuickControlSettings() {
   const editing = params.get('slot');
   const [bindings, setBindings] = useState(() => readSetting<Bindings>(bindingKey, {}));
   const [notice, setNotice] = useState('');
+  const ios = Capacitor.getPlatform() === 'ios';
   function bind(slot: Slot, id: string) {
     const next = { ...readSetting<Bindings>(bindingKey, {}), [slot]: id };
     saveSetting(bindingKey, next);
@@ -70,15 +102,19 @@ export function QuickControlSettings() {
     window.dispatchEvent(new Event(changed));
   }
   return <><AppBar title="快捷控制" back="/mine" /><div className="page no-nav">
-    <Section title="快捷设置磁贴">{slotNames.map(slot => {
+    {ios && <Section><Row icon="spark" title="打开快捷指令" sub="iOS 16 起，添加动作时搜索 LeapMore，选择车辆或备车预设。"
+      onClick={() => { void widgetBridge.openShortcuts().catch(() => setNotice('请先安装 Apple 的「快捷指令」App。')); }} /></Section>}
+    {groups.map(group => <Section key={group.title} title={group.title}>{group.slots.filter(slot => !ios || slot !== 'prepare-2').map(slot => {
       const car = cars.find(car => prepareSlot(slot) ? car.presets.some(p => p.id === bindings[slot]) : car.id === bindings[slot]);
       const preset = car?.presets.find(p => p.id === bindings[slot]);
-      return <Row key={slot} title={slots[slot]} sub={car ? [car.title, preset?.title].filter(Boolean).join(' · ') : '选择绑定车辆'}
-        icon={prepareSlot(slot) ? 'spark' : slot === 'find' ? 'carHorn' : slot === 'lock-only' ? 'doorLock' : 'climateFan'}
-        onClick={() => { setNotice(''); setParams({ slot }); }} />;
-    })}</Section>
+      return <Row key={slot} title={slots[slot]} sub={ios ? undefined : car ? [car.title, preset?.title].filter(Boolean).join(' · ') : '选择绑定车辆'}
+        icon={prepareSlot(slot) ? 'spark' : slot === 'find' ? 'carHorn' : slot === 'lock-only' ? 'doorLock' : slot.startsWith('window-') ? 'sideWindowOpen' : quickClimatePreset(slot)?.[1] ?? 'climateFan'}
+        onClick={ios ? undefined : () => { setNotice(''); setParams({ slot }); }} />;
+    })}</Section>)}
+    {ios && supportsManualTrips() && <Section title="手机记录"><Row icon="route" title="开始记录行程和充电" /><Row icon="route" title="结束记录行程和充电" /></Section>}
+    <p className="tiny muted">{ios ? '快捷指令和控制中心使用绑定车辆的控车设置。' : '磁贴按绑定车辆的控车设置执行。'}选择「发送前不确认」并保存操作密码后，点击即发送。</p>
     {notice && <p role="status">{notice}</p>}
-    {validSlot(editing) && <Sheet title={slots[editing]} close={() => setParams({}, { replace: true })} showClose>
+    {!ios && validSlot(editing) && <Sheet title={slots[editing]} close={() => setParams({}, { replace: true })} showClose>
       {cars.length === 0 && <p>请先登录并添加车辆。</p>}
       {cars.map(car => prepareSlot(editing) ? <Section key={car.id} title={car.title}>
         {car.presets.length === 0 && <p>请先为这辆车创建备车预设。</p>}
@@ -125,7 +161,8 @@ export function QuickAction() {
     if (checkPower && !report.data) { finish('无法读取绑定车辆的车况，请稍后重试。'); return; }
     const recent = m.simulated || (report.data?.vehicleId === m.vehicleId &&
       Date.now() - (report.data?.reportedAt ?? report.data?.updatedAt ?? 0) < 90_000);
-    const kind = prepareSlot(slot) ? 'prepare' : slot === 'lock-only' ? 'lock' : slot === 'find' ? 'find' : 'climate';
+    const selectedClimate = quickClimatePreset(slot);
+    const kind = prepareSlot(slot) ? 'prepare' : slot === 'lock-only' ? 'lock' : slot === 'find' ? 'find' : slot.startsWith('window-') ? 'window' : 'climate';
     const blocked = c.reason(kind);
     if (blocked) { finish(blocked[0]); return; }
     if (kind === 'prepare' && preset) {
@@ -139,6 +176,8 @@ export function QuickAction() {
       if (recent && (m.simulated ? c.locked : report.data?.locked) === true) { finish('车辆已上锁'); return; }
       c.setDoorLock(true);
     } else if (slot === 'find') c.find();
+    else if (kind === 'window') c.setWindow(slot === 'window-close' ? 'closed' : 'vent');
+    else if (selectedClimate) c.preset(selectedClimate);
     else if (kind === 'climate') {
       const on = slot === 'climate-on';
       if (recent && (m.simulated ? c.climateOn : report.data?.climateOn) === on) { finish(on ? '空调已开启' : '空调已关闭'); return; }

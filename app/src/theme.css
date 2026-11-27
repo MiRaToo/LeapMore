@@ -375,13 +375,10 @@ html[data-theme="dark"] .tabbar {
 .tab svg { width: 21px; height: 21px; }
 
 /* Record category selector */
-.record-tabs {
-  position: relative; border-radius: 15px; background: var(--bg-soft);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.record-tabs .tab-indicator { border-radius: 11px; background: var(--card); box-shadow: 0 2px 6px rgba(15, 33, 48, .11), inset 0 0 0 1px var(--line); }
-.record-tabs button { min-height: 0; padding: 8px 0; border-radius: 11px; font-size: 12.5px; font-weight: 550; color: var(--text2); }
-.record-tabs button[aria-selected="true"] { color: var(--text); font-weight: 650; }
+.record-tabs { display: inline-flex; align-items: center; padding: 0; vertical-align: middle; }
+.record-tabs button { min-width: 40px; min-height: 40px; color: var(--text2); font-size: 14px; font-weight: 500; white-space: nowrap; border-radius: 6px; }
+.record-tabs button[aria-selected="true"] { font: inherit; color: var(--text); }
+.record-tab-divider { color: var(--line-strong); font-size: 13px; font-weight: 400; line-height: 1; user-select: none; }
 .record-panel { margin-top: 12px; }
 .record-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--r-sm); }
 @media (prefers-reduced-motion: reduce) {
@@ -1149,9 +1146,7 @@ html[data-theme="dark"] .dual-range { color: var(--text2); }
 .tm b { display: block; font-size: 17px; font-weight: 650; line-height: 1.2; }
 .trip-info[aria-busy=true] .tm b { width: min(3.2em, 80%); color: transparent; border-radius: 4px; background: var(--card-2); }
 .tm small { display: block; font-size: 10px; color: var(--text2); }
-.charge-interval { border-bottom: 1px solid var(--line); padding-bottom: 11px; margin-bottom: 14px; font-size: 13px; font-weight: 550; }
 .charge-cost-actions { display: flex; flex-wrap: wrap; column-gap: 16px; margin-top: 12px; }
-.record-soc { margin-top: 12px; }
 .record-detail { --trip-origin: var(--success); --trip-destination: var(--error); }
 .trip-legs { --leg-gap: 9px; display: flex; flex-direction: column; gap: var(--leg-gap); }
 .trip-leg { position: relative; display: flex; gap: 9px; align-items: flex-start; }
@@ -1162,6 +1157,7 @@ html[data-theme="dark"] .dual-range { color: var(--text2); }
 .trip-leg-body { min-width: 0; flex: 1; }
 .trip-leg b { display: block; font-size: 11.5px; }
 .trip-leg small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 11px; line-height: 1.4; min-height: 2.8em; color: var(--text2); margin-top: 2px; }
+.trip-leg:last-child small { min-height: 0; }
 .trip-leg time { flex: none; color: var(--text2); font-size: 11px; font-variant-numeric: tabular-nums; }
 .speed-svg { width: 100%; height: auto; display: block; margin-top: 4px; }
 /* tariff sheet */

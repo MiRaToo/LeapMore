@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useSetting } from '../../data/preferences';
 import { kmBetween } from '../../data/ha/measurements';
@@ -29,7 +29,7 @@ const zoomLimit = (zoom: number) => Math.max(3, Math.min(18, zoom));
 function spanBetween([a, b]: ScreenPoint[]) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, length: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
 }
-const speedColors = ['#2196f3', '#4caf50', '#ffeb3b', '#ff9800', '#f44336'];
+const speedColors = ['#2b86ae', '#229486', '#9fa14a', '#dd9545', '#cc6355'];
 
 function fitRoute(route: RoutePoint[], w: number, h: number, padX = 47, padY = 36) {
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
@@ -111,10 +111,11 @@ export function RouteThumbnail({ runs, mapStyle }: { runs: RoutePoint[][]; mapSt
 
 export const homeMapAnchor = { x: .26, y: .44 };
 
-export function AmapView({ lat, lon, height = 240, name = '车辆位置', sub, preview = false, illustrated = false, route, selectedAt, onRouteSelect }: {
+export function AmapView({ lat, lon, height = 240, marker = 'car', name = marker === 'charge' ? '充电位置' : '车辆位置', sub, preview = false, illustrated = false, route, selectedAt, onRouteSelect }: {
   lat: number; lon: number; height?: number | '100%'; name?: string; sub?: string; preview?: boolean; illustrated?: boolean;
-  route?: RoutePoint[]; selectedAt?: number | null; onRouteSelect?: (at: number | null) => void;
+  marker?: 'car' | 'charge'; route?: RoutePoint[]; selectedAt?: number | null; onRouteSelect?: (at: number | null) => void;
 }) {
+  const recordMap = !!route || marker === 'charge';
   const box = useRef<HTMLDivElement | null>(null);
   const pointers = useRef(new Map<number, ScreenPoint>());
   const drag = useRef<{ start: ScreenPoint; camera: Camera; picking: boolean; moved: boolean; fromPinch?: boolean } | null>(null);
@@ -126,6 +127,20 @@ export function AmapView({ lat, lon, height = 240, name = '车辆位置', sub, p
   const [follow, setFollow] = useState(true);
   const { choice: mapChoice, setChoice: setMapChoice, style: mapStyle } = useMapStyle();
   const [dragging, setDragging] = useState(false);
+  const [opacity, setOpacity] = useSetting('tripMapControlOpacity', 88);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const toolsId = useId();
+
+  const toolBox = useRef<HTMLDivElement>(null);
+  const toolButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!toolsOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (!toolBox.current?.contains(event.target as Node)) setToolsOpen(false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [toolsOpen]);
 
   useEffect(() => {
     const el = box.current;
@@ -239,7 +254,9 @@ export function AmapView({ lat, lon, height = 240, name = '车辆位置', sub, p
   }
 
   return (
-    <div className={'amap-view' + (isDark ? ' is-dark' : '') + (preview ? ' amap-preview' : '')} data-map-style={mapChoice} data-map-zoom={z.toFixed(3)} style={{ height }} ref={box}>
+    <div className={'amap-view' + (isDark ? ' is-dark' : '') + (preview ? ' amap-preview' : '') + (recordMap ? ' amap-record' : '') + (route ? ' amap-trip' : '')}
+      data-map-style={mapChoice} data-map-zoom={z.toFixed(3)}
+      style={recordMap ? { height, '--map-control-opacity': opacity / 100 } as CSSProperties : { height }} ref={box}>
       <div className="amap-tiles">
         {illustrated && <div className="map-bg" style={preview ? undefined : {
           transform: `translate(${carLeft - size.w / 2}px, ${carTop - size.h / 2}px) scale(${Math.max(1, 2 ** (z - 16))})`,
@@ -249,7 +266,7 @@ export function AmapView({ lat, lon, height = 240, name = '车辆位置', sub, p
       </div>
       <div className="amap-tint" />
       {segments.length > 0 && <svg className="amap-route" viewBox={`0 0 ${size.w} ${size.h}`} aria-label="行程轨迹">
-        <path d={trajectory.solid} fill="none" stroke="white" strokeWidth="8" strokeLinecap="round" />
+        <path d={trajectory.solid} fill="none" stroke="white" strokeOpacity=".9" strokeWidth="6.5" strokeLinecap="round" />
         {trajectory.paths.map(([color, path]) => <path className="amap-speed-path" key={color} d={path} fill="none" stroke={color} strokeWidth="4" strokeLinecap="round" />)}
         {trajectory.gaps && <path d={trajectory.gaps} fill="none" stroke="#727781" strokeWidth="2.5" strokeDasharray="4 4" />}
         <circle aria-label="起点" cx={segments[0].x} cy={segments[0].y} r="6" fill="var(--trip-origin)" stroke="white" strokeWidth="2" />
@@ -266,21 +283,34 @@ export function AmapView({ lat, lon, height = 240, name = '车辆位置', sub, p
         aria-label={name}
         title={name}
       >
-        <Icon name="car" size={14} />
+        <Icon name={marker === 'charge' ? 'plug' : 'car'} size={14} />
       </button>}
       {!preview && (
         <>
-          <div className="amap-bar"><div className="amap-title"><b>{name}</b>{sub && <small>{sub}</small>}</div></div>
-          <div className="amap-ctl">
-            <button onClick={() => zoomBy(1)} aria-label="放大">＋</button>
-            <button onClick={() => zoomBy(-1)} aria-label="缩小">－</button>
-            <button className={follow ? 'on' : ''} onClick={() => { setFollow(true); updateCamera(fit ?? { center: [lat, lon], zoom: 16 }); }} aria-label={route ? '回到路线' : '跟随车辆'}>◎</button>
-            <button className="amap-style" onClick={() => setMapChoice(choice => mapChoices[(mapChoices.indexOf(choice) + 1) % mapChoices.length])}
-              aria-label="切换底图" title={mapChoice === 'system' ? '跟随系统颜色' : undefined}>
-              {mapLabels[mapChoice]}
-            </button>
+          {!recordMap && <div className="amap-bar"><div className="amap-title"><b>{name}</b>{sub && <small>{sub}</small>}</div></div>}
+          <div className="amap-ctl" ref={toolBox} onKeyDown={e => {
+            if (toolsOpen && e.key === 'Escape') { setToolsOpen(false); toolButton.current?.focus(); }
+          }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setToolsOpen(false); }}>
+            <button type="button" className={follow ? 'on' : ''} onClick={() => {
+              setFollow(true); updateCamera(fit ?? { center: [lat, lon], zoom: 16 }); setToolsOpen(false);
+            }} aria-label={route ? '回到路线' : marker === 'charge' ? '回到充电位置' : '跟随车辆'}><Icon name="locate" size={16} /></button>
+            {recordMap && <button type="button" ref={toolButton} aria-label="地图设置" aria-expanded={toolsOpen} aria-controls={toolsId}
+              onClick={() => setToolsOpen(!toolsOpen)}><Icon name="layers" size={16} /></button>}
+            {(!recordMap || toolsOpen) && <div className={recordMap ? 'amap-tools-panel' : 'amap-vehicle-tools'} id={toolsId}>
+              <div className="amap-zoom">
+                <button type="button" onClick={() => zoomBy(1)} aria-label="放大"><Icon name="plus" size={15} /></button>
+                <button type="button" onClick={() => zoomBy(-1)} aria-label="缩小"><Icon name="minus" size={15} /></button>
+              </div>
+              <button type="button" className="amap-style" onClick={() => setMapChoice(choice => mapChoices[(mapChoices.indexOf(choice) + 1) % mapChoices.length])}
+                aria-label="切换底图" title={mapChoice === 'system' ? '跟随系统颜色' : undefined}>
+                {recordMap && <span>底图</span>}{mapLabels[mapChoice]}
+              </button>
+              {recordMap && <label className="amap-opacity"><span>控件不透明度</span><output>{opacity}%</output>
+                <input type="range" aria-label="地图控件不透明度" min={35} max={100} value={opacity} onChange={e => setOpacity(e.currentTarget.valueAsNumber)} />
+              </label>}
+            </div>}
           </div>
-          {!illustrated && <span className="amap-attrib">{route && `${(2 ** (z - 13)).toFixed(1)}× · `}© 高德地图</span>}
+          {!illustrated && <span className="amap-attrib">© 高德地图</span>}
           <div
             className={'amap-drag' + (dragging ? ' active' : '')}
             tabIndex={onRouteSelect ? 0 : undefined}
@@ -297,6 +327,7 @@ export function AmapView({ lat, lon, height = 240, name = '车辆位置', sub, p
             }}
             onPointerDown={(e) => {
               if (e.button !== 0 || pointers.current.size >= 2 || e.pointerType !== 'touch' && pointers.current.size > 0) return;
+              if (toolsOpen) setToolsOpen(false);
               const point = { x: e.clientX, y: e.clientY };
               pointers.current.set(e.pointerId, point);
               e.currentTarget.setPointerCapture(e.pointerId);

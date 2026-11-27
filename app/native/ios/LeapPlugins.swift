@@ -18,6 +18,7 @@ final class LeapBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(LeapAuthPlugin())
         bridge?.registerPluginInstance(LeapWidgetPlugin())
         bridge?.registerPluginInstance(LeapSettingsPlugin())
+        bridge?.registerPluginInstance(LeapCheckInPlugin())
         bridge?.registerPluginInstance(LeapRecorderPlugin())
         if #available(iOS 26.0, *) { bridge?.registerPluginInstance(LeapTripPlugin()) }
     }
@@ -211,10 +212,18 @@ final class LeapAuthPlugin: CAPPlugin, CAPBridgedPlugin {
 final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
     let identifier = "LeapWidgetPlugin"
     let jsName = "LeapWidget"
-    let pluginMethods: [CAPPluginMethod] = ["update", "clear", "take", "publishQuick", "takeDemo"].map {
+    let pluginMethods: [CAPPluginMethod] = ["update", "clear", "take", "publishQuick", "takeDemo", "openShortcuts"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let storage = LeapWidgetStorage.defaults
+
+    @objc func openShortcuts(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            UIApplication.shared.open(URL(string: "shortcuts://")!, options: [:]) { opened in
+                if opened { call.resolve() } else { call.reject("请先安装 Apple 的「快捷指令」App") }
+            }
+        }
+    }
 
     @objc func update(_ call: CAPPluginCall) {
         guard let summary = call.getObject("summary"),
@@ -242,6 +251,13 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func take(_ call: CAPPluginCall) {
+        if let review = storage?.dictionary(forKey: "quick-review") {
+            storage?.removeObject(forKey: "quick-review")
+            if let at = review["at"] as? Date, (0..<60).contains(Date.now.timeIntervalSince(at)),
+               let action = review["action"] as? String, let target = review["target"] as? String {
+                call.resolve(["action": action, "target": target]); return
+            }
+        }
         let action = storage?.string(forKey: "widget-action")
         let at = storage?.object(forKey: "widget-action-at") as? Date
         storage?.removeObject(forKey: "widget-action")
@@ -260,6 +276,7 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
         storage?.removeObject(forKey: "vehicle-summary-at")
         storage?.removeObject(forKey: "quick-targets")
         storage?.removeObject(forKey: "quick-pending")
+        storage?.removeObject(forKey: "quick-review")
         if #available(iOS 18.0, *) {
             for action in QuickVehicleAction.allCases { storage?.removeObject(forKey: QuickControlFeedback.key(action)) }
         }

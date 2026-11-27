@@ -28,8 +28,18 @@ for spec in 'arm64-v8a aarch64 linux-aarch64' 'x86_64 x86_64 linux-x86_64'; do
   tar -xzf "$tarball" -C "$work/$abi" --strip-components 1
   (
     cd "$work/$abi"
-    export PATH="$llvm:$PATH" CC="$target-unknown-linux-ohos-clang" AR=llvm-ar RANLIB=llvm-ranlib
-    perl Configure "$platform" shared no-tests --prefix=/usr --openssldir=/etc/ssl "-ffile-prefix-map=$work/$abi=."
+    # OpenSSL includes Configure's flags verbatim in libcrypto's version data.
+    # Apply the host-specific source mapping only when the compiler runs.
+    mkdir "$work/$abi-cc"
+    export CC="$target-unknown-linux-ohos-clang" AR=llvm-ar RANLIB=llvm-ranlib
+    export LEAPMORE_OPENSSL_CLANG="$llvm/$CC" LEAPMORE_OPENSSL_SOURCE="$PWD"
+    cat > "$work/$abi-cc/$CC" <<'SH'
+#!/bin/sh
+exec "$LEAPMORE_OPENSSL_CLANG" "-ffile-prefix-map=$LEAPMORE_OPENSSL_SOURCE=." "$@"
+SH
+    chmod +x "$work/$abi-cc/$CC"
+    export PATH="$work/$abi-cc:$llvm:$PATH"
+    perl Configure "$platform" shared no-tests --prefix=/usr --openssldir=/etc/ssl
     make -j"${JOBS:-8}" build_libs
     cp LICENSE.txt "$output/LICENSE.txt"
     mkdir -p "$output/libs/$abi" "$output/openssl/$abi"

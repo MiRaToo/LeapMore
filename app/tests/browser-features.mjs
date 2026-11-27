@@ -34,6 +34,9 @@ try {
   await b.send('Storage.clearDataForOrigin', { origin: new URL(origin).origin, storageTypes: 'local_storage,indexeddb' });
   await b.navigate(origin);
   await match(/欢迎回来|驻车照片|使用演示账号/);
+  if (process.env.LEAPMORE_TEST_3D === '1') await b.run(`localStorage.setItem('leapmore.wrap',JSON.stringify({
+    'demo-c10': { rear: {kind:'stripe',color:'#102938',x:50,y:50,rotation:15,scale:100,opacity:75} }
+  }))`);
   if ((await b.run('document.body.innerText')).includes('欢迎使用 LeapMore')) await click('我知道了');
   const session = await b.run("localStorage.getItem('leapmore.mode')");
   if (session !== '"demo"') {
@@ -42,6 +45,9 @@ try {
     await click('使用演示账号');
     await click('进入车辆');
   }
+  await route('/quick-controls');
+  assert.deepEqual(await b.run('[...document.querySelectorAll(".page .secH")].map(el => el.textContent)'), ['备车','空调','车窗','车锁与寻车']);
+  assert.equal(await b.run('document.querySelectorAll(".page .sec button.row").length'), 12);
   const quick = (action, key) => route('/quick-action?' + new URLSearchParams({ action, target: JSON.stringify(key) }));
   await quick('find', ['demo', 'demo-b10', 'DEMO••3106']);
   await match(/确认鸣笛寻车/);
@@ -140,9 +146,9 @@ try {
     await route('/control/' + feature);
     assert.equal(await b.run("location.hash"), '#/control');
   }
-  assert.equal(await b.run("document.querySelector('.prepare-options [aria-pressed=true]').textContent"), '我的旧预设');
+  assert.ok(await b.run("document.querySelector('.construction-sentry').closest('.sec').contains(document.querySelector('.proximity-controls'))"));
+  assert.ok(await b.run("[...document.querySelectorAll('.prepare-options button')].some(e => e.textContent === '我的旧预设')"));
   await click('冬日温暖');
-  await click('立即备车');
   await match(/冬日温暖 · 空调 26℃ · 风量 3 档/);
   await click('取消');
   await click('管理预设');
@@ -161,12 +167,16 @@ try {
   await click('风挡除霜');
   await fill('预设名称', '测试出发');
   await b.click('.prep-editor button.row');
-  await b.click('.prep-editor dialog button.row');
+  await match(/附近地点/);
+  await fill('搜索目的地', '图');
+  await match(/上海图书馆东馆/);
+  await fill('搜索目的地', '家');
+  await b.click('[aria-label="选择家"]');
   await b.click('[aria-label="预设座椅"] button:nth-child(2)');
   await b.click('[aria-label="方向盘加热"]');
   await b.click('[aria-label="后视镜加热"]');
   await click('保存预设');
-  await click('立即备车');
+  await click('测试出发');
   await match(/测试出发 · 家、风挡除霜、主驾座椅加热、方向盘加热、后视镜加热/);
   await click('确认发送');
   await match(/车端已确认/);
@@ -186,10 +196,27 @@ try {
   await match(/预约备车已更新/);
   await wait(1000);
   await match(/暂无预约备车/);
+  await click('添加预约');
+  await click('自定义', '[aria-label="预约配置方式"] button');
+  assert.equal(await b.run('document.querySelectorAll("dialog[open]").length'), 1);
+  await b.click('[aria-label="预设空调"]');
+  await b.click('[aria-label="风量"]');
+  await click('5 档', 'dialog[open] button');
+  assert.match(await b.run('document.querySelector("[aria-label=风量]").textContent'), /5 档/);
+  await click('使用预设', '[aria-label="预约配置方式"] button');
+  await click('自定义', '[aria-label="预约配置方式"] button');
+  assert.match(await b.run('document.querySelector("[aria-label=风量]").textContent'), /5 档/);
+  await click('保存预约');
+  await click('确认发送');
+  await match(/预约备车已更新/);
+  await wait(1000);
+  assert.equal(await b.run("document.querySelector('.prep-plan-details span').textContent"), '自定义备车');
   await b.click('dialog[open] [aria-label="关闭"]');
   await route('/home');
   await route('/control');
-  assert.equal(await b.run("document.querySelector('.prepare-options [aria-pressed=true]').textContent"), '测试出发');
+  await click('测试出发');
+  await match(/确认立即备车/);
+  await click('取消');
   await route('/home');
   await b.click('[aria-label=车窗]');
   await click('开一条缝');
@@ -220,23 +247,33 @@ try {
   await match(/Web 服务 Key/);
   await click('取消','dialog button');
   await click('管理');
+  assert.equal(await b.run('document.querySelectorAll(".favorite-delete").length'), 3);
+  await click('新增地址');
+  await match(/附近地点/);
+  await fill('搜索地址','模拟车位 A');
+  await click('使用输入的地址');
   await fill('名称','测试车位');
-  await fill('地址','模拟车位 A');
-  await click('添加常用地址','dialog button');
+  await click('保存地址');
   await match(/模拟车位 A/);
-  await b.click('dialog[open] [aria-label=关闭]');
+  await click('完成');
   await b.click('[aria-label="发送导航到测试车位"]');
   await match(/确认发送导航到测试车位/);
   await click('取消');
   await click('管理');
   await b.click('[aria-label="删除测试车位"]');
-  await click('删除');
+  await click('删除', 'dialog button');
   assert.ok(!(await b.run('document.body.innerText')).includes('模拟车位 A'));
-  await b.click('dialog[open] [aria-label=关闭]');
+  await click('完成');
+  await route('/records-source');
+  await b.click('.source-opt:first-of-type');
   await route('/trips/demo-trip-0');
+  const mapZoom = () => b.run("Number(document.querySelector('.amap-trip').dataset.mapZoom)");
+  const originalZoom = await mapZoom();
+  await b.click('[aria-label=地图设置]');
   await b.click('[aria-label=放大]');
-  await match(/2.0×/);
+  assert.ok(await mapZoom() > originalZoom);
   await b.click('[aria-label=回到路线]');
+  await b.click('[aria-label=地图设置]');
   await b.click('[aria-label=切换底图]');
   await match(/日间/);
   await b.click('[aria-label=切换底图]');
@@ -272,6 +309,9 @@ try {
     assert.equal(await b.run("window.appearanceFrame===document.querySelector('.c3d-stage iframe') && !!document.querySelector('.model-orbit') && !document.querySelector('dialog[open]')"),true);
     await click('完成');
     await click('自定义车衣');
+    await click('车尾', '.wrap-faces button');
+    assert.match(await b.run("document.querySelector('[aria-label=自定义车衣颜色]').textContent"), /#102938/);
+    await click('车头', '.wrap-faces button');
     await click('条纹');
     await b.click('[aria-label=自定义车衣颜色]');
     await fill('十六进制颜色', '#13579B');
@@ -286,6 +326,32 @@ try {
     await click('左侧', '.wrap-faces button');
     await click('渐变');
     await b.click('.wrap-palette [aria-label=冰川蓝]');
+    await b.click('[aria-label=渐变结束色]');
+    await fill('十六进制颜色', '#FF1122');
+    await click('确定', '.choice-sheet button');
+    await b.click('[aria-label="槽位 2"]');
+    await click('纯色');
+    await b.click('.wrap-palette [aria-label=琥珀黄]');
+    await fill('缩放', '20'); await fill('不透明度', '100');
+    const centerPixel = () => b.run(`(() => {
+      const u = window.appearanceFrame.contentWindow.car.carPaint_CarPaintMaterial.uniforms;
+      const canvas = u.haWrapTexture?.value?.image, r = u.haWrapLeftRect?.value;
+      if (!canvas || !r?.[2]) return [];
+      return [...canvas.getContext('2d').getImageData((r[0]+r[2]/2)*canvas.width,(1-r[1]-r[3]/2)*canvas.height,1,1).data];
+    })()`);
+    async function waitForPixel(accept, message) {
+      const deadline = Date.now() + 6500;
+      let pixel;
+      do {
+        pixel = await centerPixel();
+        if (accept(pixel)) return;
+        await wait(100);
+      } while (Date.now() < deadline);
+      assert.fail(message + '，实际像素 ' + pixel.join(','));
+    }
+    await waitForPixel(([r,g,b,a]) => r === 219 && g === 168 && b === 72 && a === 255, '上层槽位应覆盖其下的渐变');
+    await fill('水平移动', '180'); await fill('垂直移动', '-60');
+    await waitForPixel(([r,g,b,a]) => r > g && b > g && a > 200 && a < 230, '平移后应露出下层渐变');
     await wait(300);
     const leftAngle = await b.run("window.appearanceFrame.contentWindow.viewer.controls.getAzimuthalAngle()");
     await click('右侧', '.wrap-faces button');
@@ -315,14 +381,19 @@ try {
       return top.haWrapTopSize?.value[1] > 4.7 && roof?.haWrapTopOpacity?.value > 0 && !frontGlass?.haWrapTopOpacity;
     })()`), 'C10 车顶应完整覆盖，前挡风玻璃应保留原材质');
     await click('右侧', '.wrap-faces button');
-    await b.run(`(async () => {
+    const uploadDecal = color => b.run(`(async () => {
       const canvas=document.createElement('canvas');
       canvas.width=8; canvas.height=4;
+      canvas.getContext('2d').fillStyle=${JSON.stringify(color)};
       canvas.getContext('2d').fillRect(0,0,4,4);
       const file=new File([await new Promise(resolve=>canvas.toBlob(resolve,'image/png'))], 'decal.png', {type:'image/png'});
       const transfer=new DataTransfer(); transfer.items.add(file);
       const input=document.querySelector('.wrap-upload input'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));
     })()`);
+    await uploadDecal('#215081');
+    await match(/碳纤维\s+图片/);
+    await b.click('[aria-label="槽位 3"]');
+    await uploadDecal('#891fa2');
     await match(/碳纤维\s+图片/);
     await click('预设');
     await fill('预设名称','车顶条纹');
@@ -339,10 +410,19 @@ try {
     await b.click('[aria-label=应用预设车顶条纹]');
     await click('右侧', '.wrap-faces button');
     assert.equal(await b.run("document.querySelector('.wrap-materials [aria-pressed=true]').innerText.trim()"),'图片');
+    await b.click('[aria-label="槽位 3"]');
+    assert.equal(await b.run("document.querySelector('.wrap-materials [aria-pressed=true]').innerText.trim()"),'图片');
+    assert.equal(await b.run("document.querySelector('[aria-label=\"槽位 1\"] i').style.backgroundImage !== document.querySelector('[aria-label=\"槽位 3\"] i').style.backgroundImage"), true);
     await click('车顶', '.wrap-faces button');
     assert.equal(await b.run("document.querySelector('.wrap-slider input[aria-label=缩放]').value"),'180');
     await click('左侧', '.wrap-faces button');
     assert.equal(await b.run("document.querySelector('.wrap-palette [aria-pressed=true]').ariaLabel"), '冰川蓝');
+    assert.match(await b.run("document.querySelector('[aria-label=渐变结束色]').textContent"), /#FF1122/);
+    await b.click('[aria-label="槽位 2"]');
+    assert.deepEqual(await b.run("[...document.querySelectorAll('[aria-label=水平移动],[aria-label=垂直移动]')].map(el => el.value)"), ['180','-60']);
+    await click('清除本槽');
+    await b.click('[aria-label="槽位 1"]');
+    assert.match(await b.run("document.querySelector('[aria-label=渐变结束色]').textContent"), /#FF1122/);
     await b.send('Emulation.setDeviceMetricsOverride',{width:320,height:568,deviceScaleFactor:1,mobile:true});
     assert.ok(await b.run("document.querySelector('.wrap-body').scrollWidth===document.querySelector('.wrap-body').clientWidth && document.querySelector('.wrap-header .btn').getBoundingClientRect().right<=innerWidth"));
     await b.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
@@ -385,6 +465,16 @@ try {
   await click('保存操作密码');
   await match(/已加密保存/);
   await route('/mine');
+  await b.click('.settings-page a[href="#/mine/experiments"]');
+  const checkIn = '[role=switch][aria-label=自动签到]';
+  assert.equal(await b.run(`document.querySelector('${checkIn}').getAttribute('aria-checked')`), 'false');
+  await b.click(checkIn);
+  await match(/演示 · 今日已签到/);
+  await b.reload();
+  await match(/演示 · 今日已签到/);
+  await b.click(checkIn);
+  assert.equal(await b.run(`document.querySelector('${checkIn}').getAttribute('aria-checked')`), 'false');
+  await b.click('.appbar [aria-label=返回]');
   await b.click('.settings-page a[href="#/mine/appearance"]');
   await match(/主题色/);
   await click('深色');

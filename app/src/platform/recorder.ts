@@ -13,7 +13,7 @@ interface RecorderPlugin {
   setDelay(options: { delay: number }): Promise<void>;
   clear(options: { vehicle: string }): Promise<void>;
   addListener(event: 'poll', callback: (tick: { scope?: string }) => void): Promise<PluginListenerHandle>;
-  addListener(event: 'status', callback: (status: { running: boolean; reason: string }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'status', callback: (status: { running: boolean; reason: string; scope?: string }) => void): Promise<PluginListenerHandle>;
 }
 export const recorder = registerPlugin<RecorderPlugin>('LeapRecorder');
 export const hasBackgroundRecorder = () => Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('LeapRecorder');

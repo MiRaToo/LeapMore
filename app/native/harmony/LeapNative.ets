@@ -136,7 +136,7 @@ export class LeapSettings extends CapacitorPlugin {
   }
 }
 
-class Vault {
+export class Vault {
   private match(key: string): asset.AssetMap {
     return new Map<asset.Tag, asset.Value>([[asset.Tag.ALIAS, utf8.encodeInto('leapmore:' + key)]]);
   }

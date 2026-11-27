@@ -15,7 +15,8 @@ import { MileageNotice } from './Energy';
 import { localDay } from '../../data/ha/measurements';
 import { haTripTrack } from '../../data/ha/ledger';
 import { defaultRecordSource, useSetting } from '../../data/preferences';
-import type { Point, Trip } from '../../data/ha/measurements';
+import { demoActiveCharge, demoActiveTrip } from '../../data/demo';
+import type { Charge, Point, Trip } from '../../data/ha/measurements';
 import { readSetting } from '../../data/localDatabase';
 import { recordPeriods, periodStart, periodTitles, type RecordPeriod } from '../../data/recordPeriod';
 import { chargeCostTotals, displayedChargeFee } from '../../data/tariff';
@@ -25,9 +26,9 @@ import { AmapView, useMapStyle } from '../vehicle/AmapView';
 import type { MapStyle } from '../vehicle/AmapView';
 import { mapPoint } from '../vehicle/Location';
 import { useAmapAddress } from '../vehicle/amapServices';
-import { Timeline, tripTimeline } from './Timeline';
-import { DetailMetrics } from './DetailMetrics';
-import { useChargeTemperature } from './useChargeTemperature';
+import { Timeline, chargeTimeline, tripTimeline } from './Timeline';
+import { DetailMetrics, MoreTripMetrics } from './DetailMetrics';
+import { useRecordTemperatures } from './useRecordTemperature';
 import { TripThumbnail } from './TripThumbnail';
 import { ChargeThumbnail } from './ChargeThumbnail';
 import { useRecordSwipe } from './useRecordSwipe';
@@ -37,7 +38,7 @@ const types = { ac: '交流 · 慢充', dc: '直流 · 快充', mixed: '多种�
 const socText = (soc: number | null | undefined) => soc == null ? '—' : value(soc, 1) + '%';
 const tripViews = [['simple', '简洁'], ['thumbnail', '缩略图'], ['cards', '卡片']] as const;
 type TripView = typeof tripViews[number][0];
-const tripMapHeight = 210;
+const recordMapHeight = 210;
 
 function ChargeAddress({ point, fallback }: { point: Point; fallback: string }) {
   const { data } = useAmapAddress(mapPoint(point));
@@ -78,11 +79,46 @@ function tripTotal(metric: ReturnType<typeof tripMetric>, trips: number, unit: s
   return (metric.count < trips ? '已知 ' : '') + value(metric.total, digits) + ' ' + unit;
 }
 
-function RecordSummary({ period, select, kind, primary, secondary }: {
-  period: RecordPeriod; select: (p: RecordPeriod) => void; kind: string; primary: ReactNode; secondary: ReactNode;
+function RecordRange({ period, select, kind }: { period: RecordPeriod; select: (p: RecordPeriod) => void; kind: string }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', dismiss, true);
+    return () => document.removeEventListener('pointerdown', dismiss, true);
+  }, [open]);
+  return <div ref={root} className="record-range" onBlur={event => {
+    if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+  }} onKeyDown={event => {
+    if (open && event.key === 'Escape') { setOpen(false); trigger.current?.focus(); }
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    if (!open) { flushSync(() => setOpen(true)); root.current?.querySelector<HTMLButtonElement>('[aria-pressed=true]')?.focus(); return; }
+    const options = Array.from(root.current?.querySelectorAll<HTMLButtonElement>('[aria-pressed]') ?? []);
+    const current = options.indexOf(document.activeElement as HTMLButtonElement);
+    options[(current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus();
+  }}>
+    <button ref={trigger} type="button" className="record-range-toggle" aria-label={kind + '时间范围，' + periodTitles[period]}
+      onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={id}>
+      {periodTitles[period]}<Icon name="chevrond" size={12} />
+    </button>
+    {open && <div className="range-menu" id={id} role="group" aria-label={kind + '时间范围'}>
+      {recordPeriods.map(([key]) => <button type="button" key={key} aria-pressed={period === key} onClick={() => {
+        select(key); setOpen(false); trigger.current?.focus();
+      }}>{periodTitles[key]}{period === key && <Icon name="check" size={15} />}</button>)}
+    </div>}
+  </div>;
+}
+
+function RecordSummary({ period, kind, primary, secondary }: {
+  period: RecordPeriod; kind: string; primary: ReactNode; secondary: ReactNode;
 }) {
   return <section className="card trip-sum period-summary" aria-label={periodTitles[period] + kind + '统计'}>
-    <Seg options={recordPeriods} current={period} choose={select} label={kind + '时间范围'} />
     <div className="record-summary-data">
     <div className="between record-summary-top">{primary}</div>
     <div className="divider" />
@@ -90,11 +126,11 @@ function RecordSummary({ period, select, kind, primary, secondary }: {
   </div></section>;
 }
 
-function TripSummary({ trips, period, select }: { trips: Trip[]; period: RecordPeriod; select: (p: RecordPeriod) => void }) {
+function TripSummary({ trips, period }: { trips: Trip[]; period: RecordPeriod }) {
   const distance = tripMetric(trips, 'distanceKm');
   const duration = tripMetric(trips, 'durationMin');
   const energy = tripMetric(trips, 'energyKwh');
-  return <RecordSummary kind="行程" period={period} select={select} primary={<>
+  return <RecordSummary kind="行程" period={period} primary={<>
     <div><div className="tiny muted">{periodTitles[period]}行程</div>
       <b className="num record-total">{trips.length} 段 · {tripTotal(distance, trips.length, 'km', 1)}</b></div>
     <div><div className="tiny muted">有数据的平均单段</div><b className="num">{distance.total === null ? '—' : value(distance.total / distance.count, 1) + ' km'}</b></div>
@@ -168,7 +204,7 @@ function TripListLink({ trip, view, mapStyle, onDelete }: { trip: Trip; view: Tr
     }}>
     {view !== 'simple' && <TripThumbnail trips={[trip]} mapStyle={mapStyle} />}
     <span className="trip-time">{clock(trip.startedAt)}<small>→ {clock(trip.endedAt)}</small></span>
-    <span className="trip-main"><b className="num">{value(trip.distanceKm, 1)} km</b><small>{value(trip.durationMin)} 分钟{view !== 'cards' && ` · ${value(trip.efficiency, 1)} kWh/100km`}{!trip.complete && ' · 片段'}</small></span>
+    <span className="trip-main"><b className="num">{value(trip.distanceKm, 1)} km</b><small>{value(trip.durationMin)} 分钟{view !== 'cards' && ` · ${value(trip.efficiency, 1)} kWh/100km`}{trip.reconstructed ? ' · 里程补记' : !trip.complete && ' · 片段'}</small></span>
     <Badge source={trip.source} />{view !== 'cards' && <Icon name="chevron" size={15} />}
   </Link>;
 }
@@ -188,9 +224,14 @@ export function RecordsPage() {
   const tripView = views[kind];
   const selectTab = (i: number) => update({ tab: i === 1 ? 'charges' : 'trips' }, { replace: true });
   const swipe = useRecordSwipe(tab, selectTab);
-  const phoneTrip = m.simulated ? m.current.driving && { speedKmh: 48, distanceKm: 12.4 } : m.cloudRecords.activeTrip;
-  const phoneCharge = m.simulated ? m.current.charging === 'charging' && { soc: m.current.soc, kwh: 4.2, powerKw: m.current.power } : m.cloudRecords.activeCharge;
-  const activeTrip = (m.usesPhone && phoneTrip) || (m.usesHA && m.ha.activeTrip);
+  const demoDriving = m.simulated && m.current.driving;
+  const demoCharging = m.simulated && m.current.charging === 'charging';
+  const { soc, power, range } = m.current;
+  const demoTrip = useMemo(() => demoDriving ? demoActiveTrip(soc, range) : null, [demoDriving, soc, range]);
+  const demoCharge = useMemo(() => demoCharging ? demoActiveCharge(soc, power) : null, [demoCharging, soc, power]);
+  const phoneTrip = demoTrip ? { record: demoTrip, speedKmh: 48, distanceKm: demoTrip.distanceKm } : m.cloudRecords.activeTrip;
+  const phoneCharge = demoCharge ? { id: demoCharge.id, soc, kwh: demoCharge.kwh, powerKw: power } : m.cloudRecords.activeCharge;
+  const activeTrip = (m.usesHA && m.ha.activeTrip) || (m.usesPhone && phoneTrip);
   const activeCharge = (m.usesPhone && phoneCharge) || (m.usesHA && !phoneTrip && m.ha.activeCharge);
   const chargeMetrics: [string, string][] = activeCharge ? [
     ['实时电量', socText(activeCharge.soc)], ['已充入电量', liveReading(activeCharge.kwh, 'kWh')],
@@ -198,15 +239,23 @@ export function RecordsPage() {
   ] : [];
   const showChargeInRecorder = !!phoneCharge && m.manualTrip.state?.ownsSampling;
   const period = m.recordPeriod, from = periodStart(period);
+  const recent = period === 'recent';
   const tomorrow = new Date().setHours(24, 0, 0, 0);
   const trips = useMemo(() => m.records.trips.filter(row => row.startedAt >= from && row.startedAt < tomorrow), [m.records.trips, from, tomorrow]);
   const charges = useMemo(() => m.records.charges.filter(row => row.startedAt >= from && row.startedAt < tomorrow), [m.records.charges, from, tomorrow]);
+  const currentTrip = activeTrip || undefined;
+  const liveTripRecord = currentTrip?.record, liveTripDistance = currentTrip?.distanceKm;
+  const activeTripRecord = useMemo(() => liveTripRecord ? { ...liveTripRecord, distanceKm: liveTripDistance ?? null } : undefined,
+    [liveTripRecord, liveTripDistance]);
+  const latestTrip = recent && (activeTripRecord ?? trips[0]);
+  const currentCharge = recent && activeCharge ? demoCharge ?? m.findCharge(activeCharge.id) : undefined;
+  const latestCharge = recent && (currentCharge?.active ? currentCharge : charges[0]);
   const chargeCost = chargeCostTotals(charges, m.tariff, m.chargeFees.get);
   const measured = charges.filter(row => row.kwh !== null);
   const kwh = measured.reduce((sum, row) => sum + row.kwh!, 0);
   const cloudRecords = m.mode === 'cloud' && m.usesPhone;
   const permitted = m.canSee('mileage');
-  const showTripViews = tab === 0 && permitted;
+  const showTripViews = tab === 0 && permitted && !recent;
   function cycleTripView() {
     const [next, label] = tripViews[(tripViews.findIndex(([key]) => key === tripView) + 1) % tripViews.length];
     setViews(previous => ({ ...previous, [kind]: next }));
@@ -232,15 +281,16 @@ export function RecordsPage() {
     }
   }
   if (search.get('tab') === 'cost') return <Navigate to="/energy?section=cost" replace />;
-  return <><AppBar title={permitted ? <><span className="sr-only">记录</span>
-    <SlidingSelector label="记录类型" options={['行程', '充电']} selected={tab} change={selectTab} /></> : '记录'}
+  return <><AppBar title={permitted ?
+    <SlidingSelector label="记录类型" options={['行程', '充电']} selected={tab} change={selectTab} /> : '记录'}
     back="/home" className="records-appbar"
-    action={<div className="records-actions">
-      {permitted && <button type="button" className="appbar-action icon-action" aria-label={tab ? '充电显示' : '行程显示'}
+    action={<div className="records-actions" role="group" aria-label="记录视图与设置">
+      {permitted && <RecordRange kind={tab ? '充电' : '行程'} period={period} select={m.setRecordPeriod} />}
+      {permitted && !recent && <button type="button" className="appbar-action icon-action" aria-label={tab ? '充电显示' : '行程显示'}
         title={tripViews.find(([key]) => key === tripView)?.[1]} onClick={cycleTripView}>
-        <Icon name="layout" size={18} />
+        <Icon name="layout" size={16} />
       </button>}
-      <Link className="appbar-action icon-action" to="/records-source" aria-label="记录设置" title="记录设置"><Icon name="gear" size={18} /></Link>
+      <Link className="appbar-action icon-action" to="/records-source" aria-label="记录设置" title="记录设置"><Icon name="climatePresets" size={16} /></Link>
     </div>} />
     {selectedTrip && <Sheet title="删除行程" dismissOnBackdrop={false} close={() => { if (!deleting) setPendingDelete(undefined); }}>
       <p>{stamp(selectedTrip.startedAt)} · {liveReading(selectedTrip.distanceKm, 'km')}</p>
@@ -253,21 +303,33 @@ export function RecordsPage() {
     {!permitted ? <MileageNotice /> : <>
       {m.source === 'ha' && m.ha.error && <Hint kind="warn">{m.ha.error} <Link to="/ha" className="link">查看连接</Link></Hint>}
       {m.source === 'ha' && !m.ha.vin && <Hint>{m.ha.identifying ? '正在识别 HA 车辆…' : '需要连接 HA 并识别到车辆。'} <Link className="link" to="/ha">设置 HA</Link></Hint>}
-      {cloudRecords && tab === 0 && m.cloudRecords.issue && <Hint>{m.cloudRecords.issue}</Hint>}
+      {m.mode === 'cloud' && tab === 0 && m.cloudRecords.issue && <Hint>{m.cloudRecords.issue}</Hint>}
+      {cloudRecords && m.background.supported && !m.background.active && !m.background.busy &&
+        <Hint kind="warn">{m.background.notice || '手机后台记录未运行，锁屏后可能漏记。'} <button className="link" onClick={() => void m.background.setActive(true)}>开启后台记录</button></Hint>}
       <div className="record-panel" id="record-panel" role="tabpanel" aria-labelledby={'record-tab-' + tab} tabIndex={0}>
-        {m.source === 'off' ? <div className="card empty"><b>还没有开启记录</b><Link className="btn accent" to="/records-source">选择数据来源</Link></div> :
+        {recent ? <>
+            <ManualTripCard charging={tab === 1} />
+            {tab === 0 ? latestTrip ? <>
+              <RecordMeta status={activeTrip ? '正在记录行程' : undefined} row={latestTrip} />
+              <TripDetailContent key={latestTrip.id} trip={latestTrip} active={!!activeTrip} speed={activeTrip ? activeTrip.speedKmh : undefined} />
+            </> : m.tripsLoading || m.ha.rangeLoading ? <p className="muted" role="status">正在读取行程…</p> : <EmptyRecords kind="行程" /> :
+              latestCharge ? <>
+                <RecordMeta status={currentCharge?.active ? '正在记录充电' : undefined} row={latestCharge} />
+                <ChargeDetailContent key={latestCharge.id} charge={latestCharge} />
+              </> : m.chargesLoading || m.ha.rangeLoading ? <p className="muted" role="status">正在读取充电记录…</p> : <EmptyRecords kind="充电" />}
+          </> :
           tab === 0 ? <>
             <ManualTripCard />
-            {activeTrip && !(m.manualTrip.available && phoneTrip) && <RecordingCard title="正在记录行程" metrics={[
+            {activeTrip && !(m.manualTrip.available && !m.simulated && phoneTrip) && <RecordingCard title="正在记录行程" metrics={[
               ['实时车速', liveReading(activeTrip.speedKmh, 'km/h', 0)],
               ['已行驶里程', liveReading(activeTrip.distanceKm, 'km')],
             ]} />}
-            <TripSummary trips={trips} period={period} select={m.setRecordPeriod} />
+            <TripSummary trips={trips} period={period} />
             {m.ha.rangePartial && <p className="tiny muted record-summary-note">部分行程历史暂不可用。</p>}
             {m.ha.rangeLoading && <p className="tiny muted record-summary-note" role="status">正在读取行程历史…</p>}
             {!trips.length && !!m.records.trips.length && <p className="muted record-period-empty">该时段暂无行程记录。</p>}
             {!m.records.trips.length && <EmptyRecords kind="行程" />}
-            <RecordDays key={JSON.stringify([m.tripScope, period])} rows={trips} unit="段" byMonth={period === 'year' || period === 'all'} grid={tripView === 'cards'}
+            <RecordDays key={JSON.stringify([m.tripScope, period])} rows={trips} unit="段" byMonth={period === 'all'} grid={tripView === 'cards'}
               preview={tripView === 'thumbnail' ? group => ({ map: <TripThumbnail trips={group} mapStyle={mapStyle} daily />,
                 totals: <TripDayTotals trips={group} /> }) : undefined}
               render={trip => <TripListLink key={trip.id} trip={trip} view={tripView} mapStyle={mapStyle}
@@ -275,17 +337,17 @@ export function RecordsPage() {
           </> : <>
             <ManualTripCard charging metrics={showChargeInRecorder ? chargeMetrics : undefined} />
             {activeCharge && !showChargeInRecorder && <RecordingCard title="正在记录充电" metrics={chargeMetrics} />}
-            <RecordSummary kind="充电" period={period} select={m.setRecordPeriod} primary={<>
+            <RecordSummary kind="充电" period={period} primary={<>
               <div><div className="tiny muted">{periodTitles[period]}充电</div><b className="num record-total">{charges.length} 次 · {measured.length && measured.length < charges.length ? '已知 ' : ''}{measured.length ? value(kwh, 1) : '—'} kWh</b></div>
               <div><div className="tiny muted">有数据的平均单次</div><b className="num">{measured.length ? value(kwh / measured.length, 1) : '—'} kWh</b></div>
             </>} secondary={<ExpenseTotals title={periodTitles[period] + (chargeCost.manualCount ? '电费' : '电费估算')} totals={chargeCost} />} />
             {m.ha.rangePartial && <p className="tiny muted record-summary-note">部分充电记录暂不可用。</p>}
             {m.ha.rangeLoading && <p className="tiny muted record-summary-note" role="status">正在读取充电历史…</p>}
             {!charges.length && !!m.records.charges.length && <p className="muted record-period-empty">该时段暂无充电记录。</p>}
-            {!m.records.charges.length && (m.source === 'ha' ? <EmptyRecords kind="充电" /> : <div className="card empty"><div className="confirm-ic"><Icon name="plug" /></div>
+            {!m.records.charges.length && (!cloudRecords ? <EmptyRecords kind="充电" /> : <div className="card empty"><div className="confirm-ic"><Icon name="plug" /></div>
               <b>{m.cloudRecords.loading ? '正在读取充电记录…' : m.cloudRecords.error && cloudRecords ? '无法读取充电记录' : '暂无充电记录'}</b>
               {cloudRecords && m.cloudRecords.error && <button className="btn secondary sm" onClick={() => void m.cloudRecords.refreshCharges()}>重试</button>}</div>)}
-            <RecordDays key="charges" rows={charges} unit="次" collapsibleDays={false} byMonth={period === 'year' || period === 'all'} grid={tripView === 'cards'}
+            <RecordDays key={'charges-' + period} rows={charges} unit="次" collapsibleDays={false} byMonth={period === 'all'} grid={tripView === 'cards'}
               render={row => {
               const manual = m.chargeFees.get(row);
               const fee = displayedChargeFee(row, m.tariff, manual);
@@ -302,6 +364,16 @@ export function RecordsPage() {
       </div>
     </>}
   </div></>;
+}
+
+function RecordDate({ row, date, showSoc = false }: { row: Trip | Charge; date: string; showSoc?: boolean }) {
+  return <span className="record-date"><time dateTime={new Date(row.startedAt).toISOString()}>{date}</time>
+    {showSoc && (row.socStart != null || row.socEnd != null) && <span className="record-date-soc">电量 {socText(row.socStart)} → {socText(row.socEnd)}</span>}</span>;
+}
+
+function RecordMeta({ status, row }: { status?: string; row: Trip | Charge }) {
+  return <div className="record-meta"><RecordDate row={row} date={stamp(row.startedAt)} showSoc={'speeds' in row} />
+    {status && <span className="record-meta-status">{status}</span>}<Badge source={row.source} /></div>;
 }
 
 function RecordMonth({ month, count, unit, children }: { month: string; count: number; unit: string; children: () => ReactNode }) {
@@ -395,16 +467,19 @@ function EmptyRecords({ kind }: { kind: string }) {
   const loading = ha && (m.ha.identifying || m.ha.recordSyncing);
   const unavailable = ha && (kind === '行程' ? m.ha.tripUnavailable : m.ha.chargeUnavailable);
   const title = loading ? `正在同步${kind}记录…` : unavailable ? `${kind}记录暂不可用` : `暂无${kind}记录`;
+  if (m.source === 'off' && (kind === '行程' ? m.tripsLoading : m.chargesLoading)) return <p className="muted" role="status">正在读取{kind}记录…</p>;
+  if (m.source === 'off') return <div className="card empty"><b>{title}</b><p className="tiny muted">当前已关闭采样，可选择数据源开始记录。</p>
+    <Link className="btn secondary sm" to="/records-source">选择数据来源</Link></div>;
   return <div className="card empty"><div className="confirm-ic"><Icon name={kind === '行程' ? 'route' : 'plug'} /></div><b>{title}</b>
     {!loading && <p className="tiny muted">{ha ? unavailable ? '可在 HA 同步设置中重试并查看同步状态。' : '当前同步范围内没有可用记录。' :
-      cloud && supportsManualTrips() ? '开始记录后，车辆行驶时会生成路段。' : cloud ? '行程来自零跑云车况采样。可在记录设置中开启后台轮询。' : '手机记录需要登录零跑账号。'}</p>}
+      cloud ? '行程来自零跑云车况采样，车辆行驶后会生成记录。' : '手机记录需要登录零跑账号。'}</p>}
     <Link className="btn secondary sm" to={m.source === 'ha' ? '/ha' : cloud ? '/records-source' : '/background-guide'}>{m.source === 'ha' ? '同步设置' : cloud ? '记录设置' : '手机记录设置'}</Link></div>;
 }
 
 export function TariffSheet({ close }: { close: () => void }) {
   const m = useModelContext();
   const [draft, setDraft] = useState(m.baseTariff);
-  const editEfficiency = m.source === 'ha';
+  const editEfficiency = m.mode === 'ha';
   const [issue, setIssue] = useState('');
   const mins = (time: string) => { const [h, m] = time.split(':').map(Number); return h * 60 + m; };
   function save() {
@@ -456,114 +531,147 @@ export function TariffSheet({ close }: { close: () => void }) {
 export function TripDetail({ restoringSession = false }: { restoringSession?: boolean }) {
   const m = useModelContext();
   const { id } = useParams();
-  const [selection, setSelection] = useState<{ id?: string; at: number } | null>(null);
-  const trip = m.findTrip(id);
-  const permitted = m.canSee('mileage');
-  const showRoute = m.canSee('location');
-  const loadingTrip = restoringSession || (!trip && m.tripsLoading);
-  const haId = trip?.id.startsWith('ha-trip-') ? trip.id.slice(8) : '';
-  const track = useQuery({ queryKey: ['ha', 'trip-track', m.ha.config?.url, m.ha.vin, haId],
-    queryFn: ({ signal }) => haTripTrack(m.ha.config!, m.ha.vin, haId, signal),
-    enabled: permitted && showRoute && !!haId && m.ha.connected && !!m.ha.vin, staleTime: 5 * 60_000 });
-  const samples = useMemo(() => tripTimeline(trip, showRoute ? track.data : undefined), [trip, showRoute, track.data]);
-  const route = useMemo(() => showRoute ? samples.flatMap((sample, i) => sample.position && sample.position.coordinate !== 'unknown'
-    ? [{ ...mapPoint(sample.position), speed: sample.value, gapBefore: i > 0 && (!samples[i - 1].position || samples[i - 1].position?.coordinate === 'unknown') }]
-    : []) : [], [showRoute, samples]);
-  const selectedAt = selection?.id === id ? selection?.at ?? null : null;
-  const selected = selectedAt === null ? undefined : samples.find(sample => sample.at === selectedAt);
-  const selectedPosition = selected?.position;
-  const locationText = showRoute && selected ? selectedPosition && selectedPosition.coordinate !== 'unknown' ?
-    `距起点 ${value(selected.distanceKm, 2)} km · ${selectedPosition.lat.toFixed(5)}, ${selectedPosition.lon.toFixed(5)}` : '暂无定位' : undefined;
-  const selectSample = (at: number | null) => setSelection(previous => {
-    if (at === null) return null;
-    return previous && previous.id === id && previous.at === at ? previous : { id, at };
-  });
-  const first = route[0], last = route.at(-1);
-  const firstAddress = useAmapAddress(first, showRoute && !m.simulated).data;
-  const lastAddress = useAmapAddress(last, showRoute && !m.simulated).data;
+  const saved = m.findTrip(id);
+  const live = [m.usesHA && m.ha.activeTrip, m.usesPhone && m.cloudRecords.activeTrip]
+    .find(row => row && (row.record.id === id || row.record.id === saved?.id));
+  const liveRecord = live ? live.record : undefined;
+  const liveDistance = live ? live.distanceKm : null;
+  const trip = useMemo(() => liveRecord ? { ...liveRecord, distanceKm: liveDistance } : saved, [liveRecord, liveDistance, saved]);
+  const loading = restoringSession || (!trip && m.tripsLoading);
   const startDay = trip ? localDay(trip.startedAt) : undefined;
   const endDay = trip?.endedAt == null ? startDay : localDay(trip.endedAt);
   const dateRange = endDay && endDay !== startDay ? `${startDay} 至 ${endDay}` : startDay;
-  const title = trip ? `${clock(trip.startedAt)} → ${clock(trip.endedAt)}` : '行程详情';
-  const routePending = !first && (loadingTrip || track.isFetching || !!haId && m.ha.identifying);
+  const title = trip ? `${clock(trip.startedAt)} → ${live ? '现在' : clock(trip.endedAt)}` : '行程详情';
+  return <><AppBar title={title} back="/records" sub={trip && dateRange
+    ? <RecordDate row={trip} date={dateRange} showSoc={m.canSee('mileage')} /> : loading ? '正在读取日期…' : undefined} action={trip && <Badge source={trip.source} />} />
+    <div className="page no-nav record-detail">{!restoringSession && !m.canSee('mileage') ? <MileageNotice /> :
+      !trip && !loading ? <Hint>未找到这段行程。</Hint> : <TripDetailContent key={id} trip={trip} loading={loading} restoringSession={restoringSession} active={!!live} speed={live ? live.speedKmh : undefined} />}
+    </div></>;
+}
+
+function TripDetailContent({ trip, loading = false, restoringSession = false, active = false, speed }: {
+  trip?: Trip; loading?: boolean; restoringSession?: boolean; active?: boolean; speed?: number | null;
+}) {
+  const m = useModelContext();
+  const [selectedAt, selectSample] = useState<number | null>(null);
+  const showRoute = m.canSee('location');
+  const haId = trip?.id.startsWith('ha-trip-') ? trip.id.slice(8) : '';
+  const track = useQuery({ queryKey: ['ha', 'trip-track', m.ha.config?.localScope, m.ha.config?.url, m.ha.vin, haId, active, m.usesHA],
+    queryFn: ({ signal }) => haTripTrack(m.ha.config!, m.ha.vin, haId, signal, 20_000, m.usesHA ? 'refresh' : 'saved-first'),
+    networkMode: 'offlineFirst',
+    enabled: m.canSee('mileage') && showRoute && !!haId && m.ha.connected && !!m.ha.vin, staleTime: 5 * 60_000,
+    refetchInterval: active ? 30_000 : false });
+  const temperatures = useRecordTemperatures(trip, active);
+  const samples = useMemo(() => tripTimeline(trip, showRoute ? track.data : undefined), [trip, showRoute, track.data]);
+  const speedSamples = showRoute && track.data?.length ? track.data : trip?.speeds;
+  const route = useMemo(() => showRoute ? samples.flatMap(sample => sample.position && sample.position.coordinate !== 'unknown'
+    ? [{ ...mapPoint(sample.position), speed: sample.value }]
+    : []) : [], [showRoute, samples]);
+  const selected = selectedAt === null ? undefined : samples.find(sample => sample.at === selectedAt);
+  const selectedPosition = selected?.position;
+  const positionDetails = showRoute && selectedAt !== null ? selectedPosition && selectedPosition.coordinate !== 'unknown' ? [
+    { label: '距起点', value: value(selected?.distanceKm, 2) + ' km' },
+    { label: '定位', value: selectedPosition.lat.toFixed(5) + ', ' + selectedPosition.lon.toFixed(5) },
+  ] : [{ label: '定位', value: '暂无定位' }] : undefined;
+  const first = route[0], last = route.at(-1);
+  const firstAddress = useAmapAddress(first, showRoute && !m.simulated).data;
+  const lastAddress = useAmapAddress(active || trip?.endedAt === null ? undefined : last, showRoute && !m.simulated).data;
+  const routePending = !first && (loading || track.isFetching || !!haId && m.ha.identifying);
   const displayMap = restoringSession || showRoute;
-  const liveTrip = trip ? trip.source === 'live' : id?.startsWith('live-');
-  return <><AppBar title={title} back="/records" sub={dateRange ?? (loadingTrip ? '正在读取日期…' : undefined)} action={trip && <Badge source={trip.source} />} />
-    <div className="page no-nav record-detail">{!restoringSession && !permitted ? <MileageNotice /> : !trip && !loadingTrip ? <Hint>未找到这段行程。</Hint> : <>
-      {displayMap && (first ? <AmapView key={id} lat={first.lat} lon={first.lon} height={tripMapHeight} name="行程路线" route={route} selectedAt={selectedAt} onRouteSelect={selectSample} /> :
-        <div className="amap-view trip-map-placeholder" style={{ height: tripMapHeight }} role="status"><Icon name="map" size={22} />
-          {loadingTrip ? '正在读取行程…' : routePending ? '正在读取 HA 轨迹…' : '暂无可用轨迹'}
-        </div>)}
-      {!displayMap && <Hint icon="shield">车辆定位未授权。</Hint>}
-      <div className="card trip-info" aria-busy={loadingTrip}><DetailMetrics items={[
-        { icon: 'route', label: '里程', reading: value(trip?.distanceKm, 1), unit: 'km' },
-        { icon: 'clock', label: '耗时', reading: value(trip?.durationMin), unit: '分钟' },
-        { icon: 'battery', label: liveTrip ? '估算耗电' : '耗电', reading: value(trip?.energyKwh, 1), unit: 'kWh' },
-        { icon: 'bolt', label: '百公里电耗', reading: value(trip?.efficiency, 1), unit: 'kWh/100km' },
-        { icon: 'gauge', label: '平均速度', reading: value(trip?.avgSpeedKmh), unit: 'km/h' },
-        { icon: 'locate', label: '轨迹点', reading: value(showRoute ? trip?.pointCount : null), unit: '个' },
-      ]} />
-      {liveTrip && <div className="record-soc tiny muted metric-label"><Icon name="batterybar" size={13} />电量 {socText(trip?.socStart)} → {socText(trip?.socEnd)}</div>}
+  const liveTrip = trip?.source === 'live';
+  const routeDetails = <>
       {displayMap && <><div className="divider" /><div className="trip-legs" aria-busy={routePending}>
-        {([['起点', first, 'start', firstAddress], ['终点', last, 'end', lastAddress]] as const).map(([label, point, pointClass, address]) => {
+        {([['起点', first, 'start', firstAddress], [active ? '最新定位' : '终点', last, 'end', lastAddress]] as const).map(([label, point, pointClass, address]) => {
           const place = address || (point ? `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}` : routePending ? '正在读取位置…' : '暂无定位');
           return <div key={label} className="trip-leg"><i aria-hidden="true" className={'leg-dot ' + pointClass} />
             <div className="trip-leg-body"><b>{label}</b><small title={place}>{place}</small></div><time>{clock(point?.at)}</time></div>;
         })}
       </div></>}
+    </>;
+  return <div className="record-detail-content">
+      {trip?.reconstructed && <Hint>{trip.mileageRemainder ? '本段为手机记录中尚未被 HA 行程覆盖的里程。' : '本段里程来自两次总里程表读数之差。'}起止时间为观测范围，实际驾驶时间未知。</Hint>}
+      {displayMap && (first ? <AmapView lat={first.lat} lon={first.lon} height={recordMapHeight} route={route} selectedAt={selectedAt} onRouteSelect={selectSample} /> :
+        <div className="amap-view trip-map-placeholder" style={{ height: recordMapHeight }} role="status"><Icon name="map" size={22} />
+          {loading ? '正在读取行程…' : routePending ? '正在读取 HA 轨迹…' : '暂无可用轨迹'}
+        </div>)}
+      {!displayMap && <Hint icon="shield">车辆定位未授权。</Hint>}
+      <div className={'card trip-info' + (trip ? ' trip-info-expandable' : '')} aria-busy={loading}><DetailMetrics items={[
+        { icon: 'route', label: '里程', reading: value(trip?.distanceKm, 1), unit: 'km' },
+        { icon: 'clock', label: '耗时', reading: value(trip?.durationMin), unit: '分钟' },
+        { icon: 'battery', label: liveTrip ? '估算耗电' : '耗电', reading: value(trip?.energyKwh, 1), unit: 'kWh' },
+        { icon: 'bolt', label: '百公里电耗', reading: value(trip?.efficiency, 1), unit: 'kWh/100km' },
+        { icon: 'gauge', label: active ? '实时车速' : '平均速度', reading: value(active ? speed : trip?.avgSpeedKmh), unit: 'km/h' },
+        { icon: 'locate', label: '轨迹点', reading: value(showRoute ? trip?.pointCount : null), unit: '个' },
+      ]} />
+      {trip ? <MoreTripMetrics trip={trip} samples={samples}>{routeDetails}</MoreTripMetrics> : routeDetails}
       </div>
-      {showRoute && first && selected && <Timeline title="车速采样" unit="km/h" samples={samples} selectedAt={selectedAt} onSelect={selectSample} extra={locationText} />}
+      {trip && <Timeline title="行程采样" unit="km/h" temperatures={temperatures} samples={samples} primarySamples={speedSamples} selectedAt={selectedAt} onSelect={selectSample} details={positionDetails} />}
       {trip?.source === 'live' && trip.energyKwh === null && (m.energySettings.capacityKwh === null ?
         <Hint>设置电池可用容量后，可按行程起止电量估算耗电。 <Link className="link" to="/vehicle-manage?setting=energy">设置容量</Link></Hint> :
         <Hint>需要记录到行程起止电量下降才能估算耗电。</Hint>)}
-    </>}</div></>;
+    </div>;
 }
 
 export function ChargeDetail({ restoringSession = false }: { restoringSession?: boolean }) {
   const m = useModelContext();
   const { id } = useParams();
-  const [selection, setSelection] = useState<{ id?: string; at: number } | null>(null);
   const charge = m.findCharge(id);
   const loadingCharge = restoringSession || (!charge && m.chargesLoading);
-  const temperature = useChargeTemperature(charge);
-  const showSamples = !!(charge?.powerTimeline?.length || charge?.powers.length);
+  return <><AppBar title="充电详情" back="/records?tab=charges" sub={charge ? stamp(charge.startedAt) : loadingCharge ? '正在读取日期…' : undefined} action={charge && <Badge source={charge.source} />} />
+    <div className="page no-nav record-detail">{!restoringSession && !m.canSee('mileage') ? <MileageNotice /> : !charge && !loadingCharge ?
+      <Hint>未找到这次充电记录。</Hint> : <ChargeDetailContent key={id} charge={restoringSession ? undefined : charge} loading={loadingCharge} />}</div></>;
+}
+
+function ChargeDetailContent({ charge, loading = false }: { charge?: Charge; loading?: boolean }) {
+  const m = useModelContext();
+  const [selectedAt, selectSample] = useState<number | null>(null);
+  const temperatures = useRecordTemperatures(charge, charge?.active);
+  const temperature = useMemo(() => temperatures.reduce<number | null>((lowest, sample) =>
+    sample.value === null ? lowest : Math.min(lowest ?? sample.value, sample.value), charge?.minRecordedBatteryTempC ?? null),
+    [temperatures, charge?.minRecordedBatteryTempC]);
+  const powerSamples = charge?.powerTimeline?.length ? charge.powerTimeline : charge?.powers;
+  const samples = useMemo(() => chargeTimeline(charge), [charge]);
+  const hasPowerSamples = !!powerSamples?.length;
+  const showSamples = hasPowerSamples || !!charge?.socSamples?.length || temperatures.some(sample => sample.value !== null);
   const durationEnd = charge?.endedAt ?? charge?.powerTimeline?.at(-1)?.at;
   const manual = charge && m.chargeFees.get(charge);
   const fee = charge && displayedChargeFee(charge, m.tariff, manual);
   const average = charge?.powers.length ? charge.powers.reduce((s, p) => s + p.value, 0) / charge.powers.length : null;
   const peak = charge?.powers.length ? charge.powers.reduce((n, p) => Math.max(n, p.value), 0) : null;
-  return <><AppBar title="充电详情" back="/records?tab=charges" sub={charge ? stamp(charge.startedAt) : loadingCharge ? '正在读取日期…' : undefined} action={charge && <Badge source={charge.source} />} />
-    <div className="page no-nav record-detail">{!restoringSession && !m.canSee('mileage') ? <MileageNotice /> : !charge && !loadingCharge ? <Hint>未找到这次充电记录。</Hint> : <>
-      <div className="card trip-info" aria-busy={loadingCharge}><div className="between charge-interval"><span className="metric-label"><Icon name="clock" size={14} />{clock(charge?.startedAt)} → {charge?.active ? '现在' :
-        charge?.endedAt && localDay(charge.startedAt) !== localDay(charge.endedAt) ? stamp(charge.endedAt) : clock(charge?.endedAt)}</span>
-        <span className={'pill ' + (!charge || charge.partial && !charge.active ? 'pending' : 'green')}>{!charge ? '读取中…' : charge.active ? '充电中' : charge.partial ? '片段' : '已完成'}</span></div>
+  const point = m.canSee('location') && charge?.position;
+  const pin = point && point.coordinate !== 'unknown' ? mapPoint(point) : null;
+  return <div className="record-detail-content">
+      {pin && <AmapView lat={pin.lat} lon={pin.lon} height={recordMapHeight} marker="charge" />}
+      <div className="card trip-info charge-info" aria-busy={loading}>
         <DetailMetrics items={[
           { icon: 'battery', label: charge?.energyBasis === 'soc' ? '估算充入电量' : charge?.energyBasis === 'official' ? '官方充入电量' : '充入电量', reading: value(charge?.kwh, 1), unit: 'kWh' },
           { icon: 'clock', label: '充电时长', reading: value(!charge || durationEnd == null ? null : (durationEnd - charge.startedAt) / 60_000), unit: '分钟' },
-          { icon: 'thermometer', label: '电池最低温', reading: value(temperature, 1), unit: temperature === null ? loadingCharge ? '°C' : '暂无记录' : '°C · 时段最低' },
           { icon: 'plug', label: '充电类型', reading: charge ? types[charge.type] : '—' },
           { icon: 'batterybar', label: '开始电量', reading: value(charge?.socStart, 1), unit: '%' },
           { icon: 'battery', label: charge?.active ? '当前电量' : '结束电量', reading: value(charge?.socEnd, 1), unit: '%' },
+          { icon: 'thermometer', label: '电池最低温', reading: value(temperature, 1), unit: temperature === null && !loading ? '暂无记录' : '°C' },
+          ...(charge && (hasPowerSamples || charge.active) ? [
+            { icon: 'bolt' as const, label: '平均采样功率', reading: value(average, 1), unit: 'kW' },
+            { icon: 'gauge' as const, label: '最大功率', reading: value(peak, 1), unit: 'kW' },
+            charge.active ? { icon: 'bolt' as const, label: '充电功率', reading: value(powerSamples?.at(-1)?.value, 1), unit: 'kW' }
+              : { icon: 'signal' as const, label: '完整性', reading: charge.partial ? '存在缺口' : '完整' },
+          ] : []),
         ]} />
-      </div>
-      {charge && m.canSee('location') && <div className="card trip-info"><ChargePlace detail point={charge.position} /></div>}
-      <div className="card trip-info"><DetailMetrics items={[
-        { icon: 'wallet', label: manual !== undefined ? '本次实付电费' : '本次预估电费', reading: value(fee?.amount, 2), unit: '元' },
-        { icon: 'plug', label: '估算取电', reading: value(fee?.gridKwh, 1), unit: 'kWh' },
-        { icon: 'wallet', label: manual !== undefined ? '折合电价' : '平均电价', reading: value(fee?.unitPrice, 3), unit: '元/kWh' },
-      ]} />
+        <div className="divider" />
+        <DetailMetrics items={[
+          { icon: 'wallet', label: manual !== undefined ? '本次实付电费' : '本次预估电费', reading: value(fee?.amount, 2), unit: '元' },
+          { icon: 'plug', label: '估算取电', reading: value(fee?.gridKwh, 1), unit: 'kWh' },
+          { icon: 'wallet', label: manual !== undefined ? '折合电价' : '平均电价', reading: value(fee?.unitPrice, 3), unit: '元/kWh' },
+        ]} />
         {charge && fee?.amount === null && <p className="tiny muted">估算电费需要充电量、充电类型和完整时段。</p>}
-        <div className="charge-cost-actions">{charge && <EditChargeFee key={JSON.stringify([m.chargeFees.scope, id])} charge={charge} estimated={fee?.estimate?.cost} />}
+        <div className="charge-cost-actions">{charge && !charge.active && <EditChargeFee key={JSON.stringify([m.chargeFees.scope, charge.id])} charge={charge} estimated={fee?.estimate?.cost} />}
           <Link className="link" to="/records-source?setting=tariff">修改电价</Link>{charge?.source === 'live' &&
-          <Link className="link" to="/vehicle-manage?setting=energy">修改充电效率</Link>}</div></div>
-      {charge && showSamples && <Timeline title="充电功率" unit="kW" samples={charge.powerTimeline ?? charge.powers} maxGap={900_000}
-        selectedAt={selection?.id === id ? selection?.at ?? null : null} onSelect={at => setSelection(previous => previous && previous.id === id && previous.at === at ? previous : { id, at })} />}
-      {charge && showSamples && <div className="card trip-info"><DetailMetrics items={[
-        { icon: 'bolt', label: '平均采样功率', reading: value(average, 1), unit: 'kW' },
-        { icon: 'gauge', label: '最大功率', reading: value(peak, 1), unit: 'kW' },
-        { icon: 'signal', label: '完整性', reading: charge.partial ? '存在缺口' : '完整' },
-      ]} /></div>}
-    </>}</div></>;
+          <Link className="link" to="/vehicle-manage?setting=energy">修改充电效率</Link>}</div>
+        {charge && m.canSee('location') && <><div className="divider" /><ChargePlace detail point={charge.position} /></>}
+      </div>
+      {charge && showSamples && <Timeline title="充电采样" unit="kW" samples={samples} primarySamples={powerSamples} temperatures={temperatures} maxGap={900_000}
+        selectedAt={selectedAt} onSelect={selectSample} />}
+    </div>;
 }
 
 const sources = [
@@ -582,21 +690,28 @@ export function RecordsSource() {
   const [selection, setSelection] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const ios = Capacitor.getPlatform() === 'ios';
-  const defaultSource = m.mode === 'ha' ? 'ha' : defaultRecordSource;
+  const iosRecording = supportsManualTrips();
+  const phoneAction = iosRecording
+    ? (m.simulated ? '选择后开启演示记录' : m.mode === 'ha' ? '登录零跑账号后可申请后台记录' : '选择后向 iOS 申请后台记录')
+    : m.background.supported ? '选择后自动开启手机后台记录' : '';
   return <><AppBar title="记录与数据源" back="/records" sub="行程与充电记录的来源" /><div className="page no-nav">
     <Section title="选择数据源">{sources.filter(([key]) => key !== 'hybrid' || m.mode !== 'ha').map(([key, label, note]) => {
-      const badge = key === defaultSource ? '默认' : key === 'ha' ? '推荐' : '';
+      const badge = key === defaultRecordSource ? '默认' : key === 'ha' ? '推荐' : '';
+      const description = phoneAction && (key === 'phone' || key === 'hybrid')
+        ? phoneAction + (key === 'hybrid' ? '，与同车 HA 行程合并。' : '。') : note;
       return <button type="button" key={key} className={'source-opt' + (key === m.source ? ' on' : '')} aria-pressed={key === m.source}
-        onClick={() => { m.setSource(key); if (key === 'ha' || key === 'hybrid' && m.mode === 'cloud' && !m.ha.connected) navigate('/ha'); }}>
-        <span className="radio" /><span className="so-body"><b>{label}</b><small>{note}</small></span>{badge && <span className="pill">{badge}</span>}</button>;
+        onClick={() => { m.selectRecordSource(key); if (key === 'ha' || key === 'hybrid' && m.mode === 'cloud' && !m.ha.connected) navigate('/ha'); }}>
+        <span className="radio" /><span className="so-body"><b>{label}</b><small>{description}</small></span>{badge && <span className="pill">{badge}</span>}</button>;
     })}</Section>
-    {m.usesPhone && <Section title={ios ? '后台记录' : '后台常驻'}><p className="tiny muted">{m.background.active ? '后台车况轮询已启动' :
-      m.mode !== 'cloud' ? '登录零跑账号后可采集车辆上报。' : supportsManualTrips() ? '在行程或充电页开始记录，锁屏后可继续采样。' : m.background.supported ? '开启后，应用退到后台也会查询车况。' : '此平台在应用前台时查询车况。'}</p>
-      <Link className="btn secondary sm" to="/background-guide">{ios ? '查看 iPhone 后台记录指南' : '打开后台常驻设置'}</Link></Section>}
+    {m.usesPhone && (m.manualTrip.available ? <ManualTripCard settings /> : <Section title={ios ? '后台记录' : '后台常驻'}><p className="tiny muted" role="status">{m.mode !== 'cloud' ? '登录零跑账号后可采集车辆上报。' :
+      iosRecording ? (m.expired ? '登录已过期，请重新登录。' : '需要选择有里程授权的车辆。') :
+      m.background.active ? '手机后台记录已启动。' : m.background.busy ? '正在切换后台记录…' :
+        m.background.notice || (m.background.supported ? '手机后台记录未运行。重新选择手机数据源可开启。' : '此平台在应用前台时查询车况。')}</p>
+      <Link className="btn secondary sm" to="/background-guide">{ios ? '查看 iPhone 后台记录指南' : '打开后台常驻设置'}</Link></Section>)}
     {m.usesHA && <Section title="Home Assistant"><p className="tiny muted">{!m.ha.connected || m.ha.expired ? '未连接' :
       m.source === 'hybrid' && m.ha.error ? '等待连接 HA · 手机继续记录' : '已连接'}</p>
       <Link className={m.ha.connected && !m.ha.expired ? 'btn secondary sm' : 'btn accent sm'} to="/ha">{m.ha.connected && !m.ha.expired ? '管理 HA 连接' : '登录 Home Assistant'}</Link></Section>}
-    {m.source === 'off' && <Hint>已关闭记录。可继续查看即时车况。</Hint>}
+    {m.source === 'off' && <Hint>已关闭记录。已有行程和充电记录仍可查看。</Hint>}
       <Section title="充电费用">
         <Row icon="bolt" title="电价设置" sub="交流峰谷 · 直流分时" onClick={() => setSettings({ setting: 'tariff' })} />
       </Section>

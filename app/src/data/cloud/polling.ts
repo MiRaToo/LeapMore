@@ -16,7 +16,10 @@ export const vehicleRateLimited = (response: Record<string, unknown>) =>
   Number(response._status) === 429 || [429, 1023].includes(Number(response.code ?? response.result)) ||
   /风控|频繁/.test(String(response.message ?? ''));
 
-type VehicleSignal = Pick<CarState, 'reportedAt' | 'isDriving' | 'parked' | 'speedKmh' | 'locked' | 'ready' | 'gear' | 'charging'>;
+type VehicleSignal = Pick<CarState, 'reportedAt' | 'recordingFallbackAt' | 'isDriving' | 'parked' | 'speedKmh' | 'locked' | 'ready' | 'gear' | 'charging'>;
+
+export const recordingTime = (state?: Pick<CarState, 'reportedAt' | 'recordingFallbackAt'>) =>
+  state?.reportedAt ?? state?.recordingFallbackAt;
 
 export class VehiclePolling {
   private reportedAt = 0;
@@ -29,7 +32,7 @@ export class VehiclePolling {
   private nextProbeAt = 0;
 
   observe(state: VehicleSignal, now = Date.now()) {
-    const at = state.reportedAt;
+    const at = recordingTime(state);
     if (!at || at <= this.reportedAt || at > now + 60_000 || now - at > 90_000) return;
     this.reportedAt = at;
     const driving = state.isDriving === true || (state.speedKmh ?? 0) > 0;

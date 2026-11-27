@@ -262,6 +262,19 @@ struct LeapMoreWidgets: WidgetBundle {
             StopClimateControl()
             LockVehicleControl()
             FindVehicleControl()
+            AdditionalVehicleControls().body
         }
+    }
+}
+
+@available(iOSApplicationExtension 18.0, *)
+private struct AdditionalVehicleControls: WidgetBundle {
+    var body: some Widget {
+        CoolVehicleControl()
+        HeatVehicleControl()
+        VentVehicleControl()
+        DefrostVehicleControl()
+        WindowCloseVehicleControl()
+        WindowVentVehicleControl()
     }
 }

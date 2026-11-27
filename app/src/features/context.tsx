@@ -1,6 +1,6 @@
 import { noteRecording, type RecordingEvent } from '../data/recordingDiagnostics';
 import { validFrameTime } from '../data/cloud/records';
-import { readRecordingOrCloud, supportsManualTrips, useIOSTripHistory, useIOSTripRecording } from '../platform/iosTrip';
+import { readRecordingOrCloud, supportsManualTrips, useDemoTripRecording, useIOSTripHistory, useIOSTripRecording } from '../platform/iosTrip';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -16,9 +16,11 @@ import { CloudSessionExpired } from '../data/cloud/LiveClient';
 import type { LiveVehicles } from '../data/cloud/LiveClient';
 import { applyConfirmedControls, awaitingControlEcho, confirmedStatePatch, controlEchoWindow } from '../data/cloud/remote';
 import type { ConfirmedControl, RemoteCommand } from '../data/cloud/remote';
-import { CloudRateLimited, VehiclePolling } from '../data/cloud/polling';
+import { CloudRateLimited, recordingTime, VehiclePolling } from '../data/cloud/polling';
 import { useCloudRecords } from '../data/cloud/useRecords';
 import type { CarState, Powertrain, Vehicle } from '../data/types';
+import { useAutoCheckIn } from './settings/useAutoCheckIn';
+import { Capacitor } from '@capacitor/core';
 import { useHA } from '../data/useHA';
 import { useBackgroundVehicleRecorder } from '../data/phone';
 import { deleteDataset, readDataset, updateDataset } from '../data/localDatabase';
@@ -73,6 +75,8 @@ function useModel(widgetControl: boolean) {
   const [vehicleId, setVehicleId] = useSetting('activeVehicle', '');
   const [names, setNames] = useSetting<Record<string, string>>('names.v2', {});
   const [source, setSource] = useSetting<Source>('source', defaultRecordSource);
+  const [chosePhoneRecording, setChosePhoneRecording] = useSetting('chosePhoneRecording', false);
+  const [phoneSelection, setPhoneSelection] = useState<{ scope: string } | null>(null);
   const [savedTheme, setTheme] = useSetting<ThemeMode>('theme', 'system');
   const [savedAccent, setThemeAccent] = useSetting<ThemeAccent>('themeAccent', 'blue');
   const theme = Object.hasOwn(themeModes, savedTheme) ? savedTheme : 'system';
@@ -135,19 +139,25 @@ function useModel(widgetControl: boolean) {
   const sharedBase = vehicle?.shared === true;
   const grants = mode === 'demo' ? debug.grants : sharedBase ? vehicle.grants ?? { control: false, location: false, mileage: false } : allGrants;
   const expired = mode === 'cloud' ? cloudExpired : mode === 'demo' && debug.account === 'expired';
+  const checkInScope = mode === 'demo' ? 'demo' : mode === 'cloud' && cloud ? profileScope : '';
+  const autoCheckIn = useAutoCheckIn(checkInScope, cloud?.account.userId ?? '',
+    booted && !expired && !widgetControl && (mode === 'demo' || Capacitor.isNativePlatform()));
   const cloudKey = cloud && currentId ? cloud.account.userId + ':' + currentId : '';
   const [controlFeedback, setControlFeedback] = useState<{ key: string; items: ConfirmedControl[] }>();
   const vinScope = (car: Vehicle | undefined) => cloud && car?.vin ? JSON.stringify([cloud.account.userId, car.vin.toUpperCase()]) : '';
   const operationScope = vinScope(vehicle);
   const usesPhone = sourceUsesPhone(source);
   const usesHA = sourceUsesHA(source);
-  const recordCloud = !widgetControl && !!client && !!cloudKey && usesPhone && grants.mileage && !expired;
+  const readCloudHistory = !widgetControl && !!client && !!cloudKey && grants.mileage && !expired;
+  const recordCloud = readCloudHistory && usesPhone;
+  const recordingName = names[favoriteScope(mode, cloudKey, undefined, '', currentId)] || vehicle?.nickname || '我的车辆';
   const manualTrip = useIOSTripRecording(booted && !widgetControl, mode === 'cloud' && usesPhone && !expired,
-    cloud?.account.userId ?? '', vehicles, vehicle, names[favoriteScope(mode, cloudKey, undefined, '', currentId)] || vehicle?.nickname || '我的车辆');
+    cloud?.account.userId ?? '', vehicles, vehicle, recordingName);
+  const demoRecorder = useDemoTripRecording(mode === 'demo' && !widgetControl && !expired && grants.mileage && supportsManualTrips() ? currentId : '', recordingName, usesPhone);
   const nativeSampling = manualTrip.state?.ownsSampling === true;
   const vehiclePolling = useMemo(() => new VehiclePolling(), [cloudKey]);
   const ha = useHA({ vehicleId: currentId || haVehicle.id, cloudVin: mode === 'cloud' ? vehicle?.vin : undefined,
-    standalone: mode === 'ha', enabled: !!currentId && usesHA, viewingRecords, viewingCharging: route.pathname === '/charging', recordTab, recordPeriod, suspended: widgetControl,
+    standalone: mode === 'ha', enabled: !!currentId && usesHA, viewingSettings: route.pathname.startsWith('/ha'), viewingRecords, viewingCharging: route.pathname === '/charging', recordTab, recordPeriod, suspended: widgetControl,
     location: !expired && !!vehicle && grants.location, mileage: !expired && !!vehicle && grants.mileage });
   async function readCloudState(signal: AbortSignal) {
     const session = cloud!;
@@ -180,7 +190,7 @@ function useModel(widgetControl: boolean) {
   function showControlState(state: CarState) {
     if (state.vehicleId !== currentId) return;
     qc.setQueryData<CarState>(['cloud', 'state', cloudKey], existing =>
-      (existing?.reportedAt ?? 0) > (state.reportedAt ?? 0) ? existing : state);
+      (recordingTime(existing) ?? 0) > (recordingTime(state) ?? 0) ? existing : state);
   }
   function showConfirmedControl(command: RemoteCommand, before: CarState, sentAt: number) {
     const patch = confirmedStatePatch(command);
@@ -212,11 +222,12 @@ function useModel(widgetControl: boolean) {
           const report = await readCloudState(signal);
           if (diagnose && !signal.aborted) {
             const events: RecordingEvent[] = ['reply'];
-            if (!validFrameTime(report.reportedAt)) events.push('invalidTime');
-            if (report.reportedAt && report.reportedAt <= (cached()?.reportedAt ?? 0)) events.push('repeat');
+            const at = recordingTime(report);
+            if (!validFrameTime(at)) events.push('invalidTime');
+            if (at && at <= (recordingTime(cached()) ?? 0)) events.push('repeat');
             if (report.charging === 'charging') events.push('charging');
             if (!report.charging || report.charging === 'unknown') events.push('unknownCharge');
-            noteRecording(cloudKey, events, { reportedAt: report.reportedAt ?? undefined });
+            noteRecording(cloudKey, events, { reportedAt: at });
           }
           return report;
         }
@@ -232,7 +243,7 @@ function useModel(widgetControl: boolean) {
       signal.throwIfAborted();
       vehiclePolling.observe(next);
       const previous = qc.getQueryData<CarState>(['cloud', 'state', cloudKey]);
-      return previous && (previous.reportedAt ?? 0) > (next.reportedAt ?? 0) ? previous : next;
+      return previous && (recordingTime(previous) ?? 0) > (recordingTime(next) ?? 0) ? previous : next;
     }, refetchOnWindowFocus: 'always', networkMode: 'always', retry: false,
     refetchInterval: query => {
       if (query.state.error instanceof CloudSessionExpired) return false;
@@ -262,13 +273,14 @@ function useModel(widgetControl: boolean) {
   const energyScope = vehicleEnergyScope(vehicle);
   const energySettings = useMemo(() => vehicleEnergySettings[energyScope] ?? defaultVehicleEnergy(batteryPacks.preset, baseTariff),
     [vehicleEnergySettings, energyScope, batteryPacks.preset, baseTariff]);
-  const tariff = useMemo(() => usesPhone && mode !== 'ha' ? {
+  const tariff = useMemo(() => mode !== 'ha' ? {
     ac: { ...baseTariff.ac, efficiency: energySettings.acEfficiency },
     dc: { ...baseTariff.dc, efficiency: energySettings.dcEfficiency },
-  } : baseTariff, [usesPhone, mode, baseTariff, energySettings]);
-  const cloudRecords = useCloudRecords(cloudKey, currentId, client, recordCloud, grants.location, cloudState.data, energySettings,
-    cloudState.dataUpdatedAt, supportsManualTrips(), nativeSampling);
-  const historyIssue = useIOSTripHistory(manualTrip.key, manualTrip.state?.lastSample, manualTrip.state?.phase, cloudRecords.importFrames);
+  } : baseTariff, [mode, baseTariff, energySettings]);
+  const cloudRecords = useCloudRecords(readCloudHistory ? cloudKey : '', currentId, client, recordCloud, grants.location, cloudState.data, energySettings,
+    cloudState.dataUpdatedAt, supportsManualTrips(), nativeSampling, vehiclePolling.delay());
+  const historyIssue = useIOSTripHistory(readCloudHistory && booted && manualTrip.binding ? JSON.stringify(manualTrip.binding) : '',
+    manualTrip.state?.lastSample, manualTrip.state?.phase, cloudRecords.importFrames);
   const stateExpired = cloudState.error instanceof CloudSessionExpired;
   useEffect(() => { if (stateExpired && mode === 'cloud') setCloudExpired(true); }, [mode, stateExpired]);
   const sessionError = [cloudVehicles.error, recordCloud ? cloudRecords.error : null].find(error => error instanceof CloudSessionExpired);
@@ -283,7 +295,30 @@ function useModel(widgetControl: boolean) {
     return () => { live = false; };
   }, [mode, sessionError]);
   const lastHABackgroundCheck = useRef({ url: '', at: 0 });
-  const background = useBackgroundVehicleRecorder(recordCloud && !stateExpired ? cloudKey : '', vehiclePolling.delay(), async () => {
+  function selectRecordSource(next: Source) {
+    if (recordCloud && !sourceUsesPhone(next)) {
+      const at = Math.max(Date.now(), (cloudRecords.frames.at(-1)?.at ?? 0) + 1);
+      void cloudRecords.importFrames([{ at, tripBoundary: 'ended', chargeBoundary: true, changed: [], data: {} }])
+        .catch(() => setToast('无法保存本次手机记录的结束时间。'));
+    }
+    setSource(next);
+    setChosePhoneRecording(sourceUsesPhone(next));
+    if (sourceUsesPhone(next)) demoRecorder.start();
+    setPhoneSelection(sourceUsesPhone(next) && cloudKey ? { scope: cloudKey } : null);
+  }
+  const handledIOSSelection = useRef<typeof phoneSelection>(null);
+  useEffect(() => {
+    if (!phoneSelection || handledIOSSelection.current === phoneSelection) return;
+    if (!recordCloud || cloudKey !== phoneSelection.scope || stateExpired) {
+      handledIOSSelection.current = phoneSelection;
+      return;
+    }
+    if (!manualTrip.state || manualTrip.busy) return;
+    handledIOSSelection.current = phoneSelection;
+    if (!manualTrip.active) void manualTrip.toggle();
+  }, [phoneSelection, recordCloud, cloudKey, stateExpired, manualTrip]);
+  const background = useBackgroundVehicleRecorder(recordCloud && !stateExpired ? cloudKey : '', phoneSelection,
+    source === 'phone' || chosePhoneRecording, vehiclePolling.delay(), async () => {
     if (source === 'hybrid' && ha.connected && ha.config?.auto && !ha.expired) {
       const now = Date.now(), url = ha.config.url;
       if (lastHABackgroundCheck.current.url !== url || now - lastHABackgroundCheck.current.at >= 120_000) {
@@ -355,22 +390,17 @@ function useModel(widgetControl: boolean) {
       { lat: liveState.latitude, lon: liveState.longitude, at: liveState.reportedAt ?? liveState.updatedAt, coordinate: 'gcj02' as const } : null,
   };
   const scenario = simulated ? debug.scenario : cloudState.isError ? 'offline' as const : stale ? 'stale' as const : 'normal' as const;
-  const hybrid = source === 'hybrid';
-  const combinedTrips = useMemo(() => hybrid ? combineTrips(cloudRecords.trips, ha.records.trips) : null,
-    [hybrid, cloudRecords.trips, ha.records.trips]);
-  const combinedCharges = useMemo(() => hybrid ? combineCharges(cloudRecords.charges, ha.records.charges) : null,
-    [hybrid, cloudRecords.charges, ha.records.charges]);
+  const combinedTrips = useMemo(() => combineTrips(cloudRecords.trips, ha.records.trips), [cloudRecords.trips, ha.records.trips]);
+  const combinedCharges = useMemo(() => combineCharges(cloudRecords.charges, ha.records.charges), [cloudRecords.charges, ha.records.charges]);
   const rawRecords = useMemo(() => {
-    if (!grants.mileage || expired || source === 'off' || !localRecords && simulated) return { trips: [], charges: [] };
-    if (simulated && usesPhone) return demoRecords();
-    if (combinedTrips && combinedCharges) return { trips: combinedTrips.trips, charges: combinedCharges.charges };
-    if (source === 'ha') return ha.records;
-    return { trips: cloudRecords.trips, charges: cloudRecords.charges };
-  }, [grants.mileage, expired, source, simulated, usesPhone, ha.records, localRecords, cloudRecords.trips, cloudRecords.charges, combinedTrips, combinedCharges]);
-  const phoneTripScope = canSee('mileage') && usesPhone && (simulated || cloudKey) ?
+    if (!grants.mileage || expired || !currentId || !localRecords && simulated) return { trips: [], charges: [] };
+    if (simulated) return demoRecords();
+    return { trips: combinedTrips.trips, charges: combinedCharges.charges };
+  }, [grants.mileage, expired, currentId, simulated, localRecords, combinedTrips, combinedCharges]);
+  const phoneTripScope = canSee('mileage') && (simulated || readCloudHistory) ?
     JSON.stringify(simulated ? ['demo', currentId] : ['phone', cloudKey]) : '';
-  const haTripScope = canSee('mileage') && usesHA && ha.config?.localScope && ha.vin ? JSON.stringify(['ha', ha.config.localScope, ha.vin]) : '';
-  const tripScope = hybrid ? JSON.stringify([phoneTripScope, haTripScope]) : phoneTripScope || haTripScope;
+  const haTripScope = canSee('mileage') && ha.config?.localScope && ha.vin ? JSON.stringify(['ha', ha.config.localScope, ha.vin]) : '';
+  const tripScope = JSON.stringify([phoneTripScope, haTripScope]);
   const favoriteKey = favoriteScope(mode, cloudKey, ha.config?.localScope, ha.vin, currentId);
   const preferenceKeyFor = (car: Vehicle) => favoriteScope(mode, cloud ? cloud.account.userId + ':' + car.id : '', ha.config?.localScope, ha.vin, car.id);
   const localVehicleName = (car: Vehicle) => names[preferenceKeyFor(car)];
@@ -380,20 +410,20 @@ function useModel(widgetControl: boolean) {
   const chargeFees = useChargeFees(recordVehicleScope, combinedCharges?.aliases, ownedLegacyScope);
   const removedLocal = useDeletedTrips(recordVehicleScope, ownedLegacyScope);
   const restoringDeletions = removedLocal.isLoading;
-  const tripsLoading = restoringDeletions || cloudRecords.restoringFrames || usesHA && ha.restoringTrips;
-  const chargesLoading = cloudRecords.restoringFrames || cloudRecords.loading || usesHA && ha.restoringCharges;
+  const tripsLoading = restoringDeletions || cloudRecords.restoringFrames || ha.restoringTrips;
+  const chargesLoading = cloudRecords.restoringFrames || cloudRecords.loading || ha.restoringCharges;
   const records = useMemo(() => {
     if (restoringDeletions) return { ...rawRecords, trips: [] };
     if (!removedLocal.data?.length) return rawRecords;
     const removed = new Set(removedLocal.data);
-    return { ...rawRecords, trips: rawRecords.trips.filter(trip => !removed.has(trip.id) &&
+    return { ...rawRecords, trips: rawRecords.trips.filter(trip => !removed.has(trip.id) && !trip.formerIds?.some(id => removed.has(id)) &&
       !combinedTrips?.aliases.get(trip.id)?.some(id => removed.has(id))) };
   }, [removedLocal.data, restoringDeletions, rawRecords, combinedTrips]);
   const canDeleteTrip = (id: string) => !!recordVehicleScope &&
     id !== cloudRecords.activeTrip?.id && !combinedTrips?.aliases.get(id)?.includes(cloudRecords.activeTrip?.id ?? '');
   async function deleteTrip(id: string) {
     if (!canDeleteTrip(id) || !records.trips.some(trip => trip.id === id)) throw new Error('这段行程暂时无法删除。');
-    const ids = [id, ...(combinedTrips?.aliases.get(id) ?? [])];
+    const ids = [id, ...(records.trips.find(row => row.id === id)?.formerIds ?? []), ...(combinedTrips?.aliases.get(id) ?? [])];
     const queryKey = ['deleted-trips', recordVehicleScope];
     await qc.cancelQueries({ queryKey, exact: true });
     const saved = await updateDataset<string[]>('deleted-trips:' + recordVehicleScope, prior => [...new Set([...(prior ?? []), ...ids])]);
@@ -464,8 +494,8 @@ function useModel(widgetControl: boolean) {
   }
 
   return {
-    mode, booted, vehicle, vehicles, vehicleId, setVehicleId, name, source, setSource, usesPhone, usesHA, theme, setTheme, themeAccent, setThemeAccent,
-    profileScope, readVehicleReport, localVehicleName, accountMaskedPhone: cloud?.account.maskedPhone,
+    mode, booted, vehicle, vehicles, vehicleId, setVehicleId, name, source, selectRecordSource, usesPhone, usesHA, theme, setTheme, themeAccent, setThemeAccent,
+    profileScope, autoCheckIn, readVehicleReport, localVehicleName, accountMaskedPhone: cloud?.account.maskedPhone,
     colorScheme, systemColorScheme: preferredTheme, tariff, baseTariff, setTariff,
     batteryPacks, energySettings, powertrainInfo, rangeSource: range.source, rangeReadings: ranges,
     shouldGuideBatterySetup: (car: Vehicle) =>
@@ -481,9 +511,9 @@ function useModel(widgetControl: boolean) {
         setVehicleEnergySettings(values => ({ ...values, [energyScope]: settings }));
       }
     },
-    demo: mode === 'demo', simulated, debug, setDebug, expired, canSee, grants, scenario, current, records, tripsLoading, chargesLoading, tripScope, canDeleteTrip, deleteTrip, ha, background, client, cloudKey, cloudRecords, manualTrip: { ...manualTrip, issue: manualTrip.issue || historyIssue }, operationScope,
+    demo: mode === 'demo', simulated, debug, setDebug, expired, canSee, grants, scenario, current, records, tripsLoading, chargesLoading, tripScope, canDeleteTrip, deleteTrip, ha, background, client, cloudKey, cloudRecords, manualTrip: demoRecorder.available ? demoRecorder : { ...manualTrip, issue: manualTrip.issue || historyIssue }, operationScope,
     chargeFees,
-    findTrip: (id?: string) => records.trips.find(row => row.id === id || !!id && combinedTrips?.aliases.get(row.id)?.includes(id)),
+    findTrip: (id?: string) => records.trips.find(row => row.id === id || !!id && (row.formerIds?.includes(id) || combinedTrips?.aliases.get(row.id)?.includes(id))),
     findCharge: (id?: string) => records.charges.find(row => row.id === id || !!id &&
       (row.sampledId === id || combinedCharges?.aliases.get(row.id)?.includes(id))),
     recordPeriod, setRecordPeriod, favorites, paint, hasCustomPaint: !!paintSets[currentId], toast, setToast, refresh, refreshing: cloudState.isFetching,

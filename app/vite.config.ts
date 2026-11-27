@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
       name: 'leapmore-public-assets',
       apply: 'build',
       closeBundle() {
-        const files = ['manifest.webmanifest', 'viewer/isolated.js', 'viewer/view.js', 'viewer/view.html',
+        const files = ['manifest.webmanifest', 'checkin-page.js', 'viewer/isolated.js', 'viewer/view.js', 'viewer/view.html',
           ...['leaplink-icon.png', 'leaplink-icon-simple.png', 'leaplink-lockup.png', 'wechat-reward-qr.png'].map(name => 'assets/' + name)];
         if (env.LEAPMORE_LOCAL_CAR_ASSETS === '1') files.push(...['b10', 'c10', 'hero-day', 'hero-night'].map(name => 'assets/' + name + '.png'));
         if (env.LEAPMORE_LOCAL_3D_DEMO === '1') files.push('car3d-demo');

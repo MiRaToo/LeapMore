@@ -148,7 +148,7 @@ enum DirectQuickRuntime {
         }
     }
 
-    static func run(action: String, target: String) async -> String {
+    static func run(action: String, target: String, approval: String = "") async -> String {
         guard let key = try? JSONSerialization.jsonObject(with: Data(target.utf8)) as? [String], key.count >= 3 else { return "请先绑定车辆和预设" }
         let vehicle = json([key[0], key[2]])
         return await withCheckedContinuation { continuation in
@@ -157,14 +157,14 @@ enum DirectQuickRuntime {
                 let inserted = active.insert(vehicle).inserted
                 lock.unlock()
                 guard inserted else { continuation.resume(returning: "该车正在执行操作"); return }
-                let result = evaluate(action: action, target: target)
+                let result = evaluate(action: action, target: target, approval: approval)
                 lock.lock(); active.remove(vehicle); lock.unlock()
                 continuation.resume(returning: result)
             }
         }
     }
 
-    private static func evaluate(action: String, target: String) -> String {
+    private static func evaluate(action: String, target: String, approval: String) -> String {
         let deadline = ProcessInfo.processInfo.systemUptime + 28
         let input: @convention(block) () -> String = {
             guard ProcessInfo.processInfo.systemUptime < deadline,
@@ -187,7 +187,7 @@ enum DirectQuickRuntime {
         }
         guard let js = scriptContext(host: ["input": input as Any, "session": session as Any, "finish": finish as Any,
                                             "vault": vault as Any, "http": http as Any]) else { return "无法载入快捷控制" }
-        js.objectForKeyedSubscript("LeapDirect")?.invokeMethod("run", withArguments: [action, target])
+        js.objectForKeyedSubscript("LeapDirect")?.invokeMethod("run", withArguments: [action, target, approval])
         return result ?? "快捷控制执行失败"
     }
 

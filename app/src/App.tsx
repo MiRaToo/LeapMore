@@ -12,7 +12,7 @@ import { ChargeDetail, RecordsPage, RecordsSource, TripDetail } from './features
 import { EnergyPage } from './features/records/Energy';
 import { HAConnect } from './features/records/HA';
 import { AppUpdateProvider } from './features/settings/AppUpdates';
-import { AmapSettings, AppAppearance, BackgroundGuide, Mine, OperationPin, States } from './features/settings/pages';
+import { AmapSettings, AppAppearance, BackgroundGuide, Experiments, Mine, OperationPin, States } from './features/settings/pages';
 import { PublishWidget, WidgetAction, WidgetControl, WidgetPreview } from './features/vehicle/Widgets';
 import { CommandProvider } from './features/vehicle/commands';
 import { PublishQuickControls, QuickAction, QuickControlSettings } from './features/vehicle/QuickControls';
@@ -29,7 +29,7 @@ import type { WidgetControlRequest } from './platform/widgets';
 const tabs = [
   ['/home', '车辆', 'car'], ['/records', '记录', 'route'], ['/energy', '统计', 'chart'], ['/mine', '我的', 'user'],
 ] as const;
-const mineRoutes = ['/mine', '/mine/appearance'];
+const mineRoutes = ['/mine', '/mine/appearance', '/mine/experiments'];
 const watchSize = (callback: () => void) => {
   const list = matchMedia('(max-width: 340px)');
   list.addEventListener('change', callback);
@@ -78,8 +78,9 @@ function NativeLinks() {
       const take = () => {
         if (document.hidden || running) return;
         running = true;
-        void widgetBridge.take().then(({ action }) => {
-          if (action) open('com.leapmore.app://widget/action?action=' + encodeURIComponent(action));
+        void widgetBridge.take().then(({ action, target }) => {
+          if (action && target) open('com.leapmore.app://widget/quick?' + new URLSearchParams({ action, target }));
+          else if (action) open('com.leapmore.app://widget/action?action=' + encodeURIComponent(action));
         }).catch(() => {}).finally(() => { running = false; });
       };
       const timer = setInterval(take, 1250);
@@ -188,6 +189,7 @@ function Screen() {
         <Route path="/ha" element={<HAConnect />} />
         <Route path="/ha-mapping" element={<Navigate to="/ha" replace />} />
         <Route path="/mine" element={<Mine />} />
+        <Route path="/mine/experiments" element={<Experiments />} />
         <Route path="/mine/appearance" element={<AppAppearance />} />
         <Route path="/vehicle-manage" element={<VehicleList manage />} />
         <Route path="/operation-pin" element={<OperationPin />} />

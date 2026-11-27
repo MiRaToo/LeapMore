@@ -92,10 +92,21 @@ if (platform === 'android') {
     for (const [service, title, icon] of [
       ['Prepare', '一键备车', 'leap_tile_prepare'], ['PrepareSecond', '一键备车 2', 'leap_tile_prepare'],
       ['ClimateOn', '开启空调', 'leap_widget_icon_fan'], ['ClimateOff', '关闭空调', 'leap_widget_icon_fan'],
+      ['Cool', '极速降温', 'leap_widget_icon_fan'],
+      ['Heat', '极速升温', 'leap_widget_icon_fan'],
+      ['Vent', '快速除味', 'leap_widget_icon_fan'],
+      ['Defrost', '风挡除霜', 'leap_widget_icon_fan'],
+      ['WindowClose', '关闭车窗', 'leap_tile_window'],
+      ['WindowVent', '车窗通风', 'leap_tile_window'],
       ['Lock', '锁车', 'leap_widget_icon_lock'], ['Find', '鸣笛寻车', 'leap_widget_icon_find'],
     ]) {
       const name = '.VehicleTile$' + service;
-      if (!xml.includes('android:name="' + name + '"')) xml = xml.replace('</application>', `    <service android:name="${name}" android:label="${title}" android:icon="@drawable/${icon}"
+      if (xml.includes('android:name="' + name + '"')) {
+        xml = xml.replace(/<service\b[^>]*>/g, tag => tag.includes('android:name="' + name + '"')
+          ? tag.replace(/android:label="[^"]*"/, 'android:label="' + title + '"').replace(/android:icon="[^"]*"/, 'android:icon="@drawable/' + icon + '"') : tag);
+        continue;
+      }
+      xml = xml.replace('</application>', `    <service android:name="${name}" android:label="${title}" android:icon="@drawable/${icon}"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">
             <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
         </service>\n    </application>`);

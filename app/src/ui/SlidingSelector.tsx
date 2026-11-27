@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { Fragment, useRef } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
 export function SlidingSelector({ options, optionLabels, selected, change, label, nav, concealed = false }: {
@@ -25,16 +25,18 @@ export function SlidingSelector({ options, optionLabels, selected, change, label
       event.preventDefault();
       const index = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : wrap(selected + (event.key === 'ArrowRight' ? 1 : -1));
       change(index);
-      (event.currentTarget.children[index + 1] as HTMLButtonElement)?.focus({ preventScroll: true });
+      event.currentTarget.querySelectorAll('button')[index]?.focus({ preventScroll: true });
     }}>
-    <span className="tab-indicator" aria-hidden style={{ transform: 'translateX(' + selected * 100 + '%)' }} />
-    {options.map((text, i) => <button key={i} type="button" className={nav ? 'tab' : undefined} role={nav ? undefined : 'tab'}
+    {nav && <span className="tab-indicator" aria-hidden style={{ transform: 'translateX(' + selected * 100 + '%)' }} />}
+    {options.map((text, i) => <Fragment key={i}>
+      {!nav && i > 0 && <span className="record-tab-divider" aria-hidden="true">｜</span>}
+      <button type="button" className={nav ? 'tab' : undefined} role={nav ? undefined : 'tab'}
       id={nav ? undefined : 'record-tab-' + i} aria-controls={nav ? undefined : 'record-panel'}
       aria-label={optionLabels?.[i]}
       aria-current={nav && i === selected ? 'page' : undefined} aria-selected={nav ? undefined : i === selected}
       tabIndex={!concealed && (nav || selected === i) ? 0 : -1} onClick={event => {
         if (!suppress.current || event.detail === 0) change(i);
         suppress.current = false;
-      }}>{text}</button>)}
+      }}>{text}</button></Fragment>)}
   </div>;
 }

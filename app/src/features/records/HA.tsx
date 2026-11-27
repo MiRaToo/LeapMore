@@ -30,7 +30,7 @@ export function HAConnect() {
       await Browser.close().catch(() => {});
       setReauthorizing(false);
       if (!model.mode) model.chooseMode('ha');
-      if (model.source !== 'hybrid') model.setSource('ha');
+      if (model.source !== 'hybrid') model.selectRecordSource('ha');
       navigate('/ha', { replace: true });
     }).catch(error => {
       setNote(error instanceof Error && /^授权/.test(error.message) ? error.message : 'HA 授权未完成，请检查服务器与网络后重试。');
@@ -68,7 +68,7 @@ export function HAConnect() {
       setToken('');
       setReauthorizing(false);
       if (!model.mode) model.chooseMode('ha');
-      if (model.source !== 'hybrid') model.setSource('ha');
+      if (model.source !== 'hybrid') model.selectRecordSource('ha');
       navigate('/ha', { replace: true });
     } catch (error) {
       setNote(error instanceof NetworkError ? error.message : '无法连接 HA，请检查地址与认证信息。');
@@ -97,7 +97,7 @@ export function HAConnect() {
           </Picker></label>}
           <p className="small" role="status">{vehicleStatus}</p>
           {model.canSee('mileage') && model.usesHA && ha.vin && <>
-            <p className="small" role="status">{ha.ledgerSyncing || ha.recordSyncing && !ha.lastSync ? '正在同步行程与充电记录…' : `已读取 ${ha.records.trips.length} 条行程 · ${ha.records.charges.length} 条充电记录`}</p>
+            <p className="small" role="status">{ha.ledgerSyncing || ha.recordSyncing && !ha.lastSync ? '正在同步行程与充电记录…' : `已读取 ${ha.syncedTripCount} 条行程 · ${ha.syncedChargeCount} 条充电记录`}</p>
             {ha.recordSyncing && !ha.ledgerSyncing && !!ha.lastSync && <p className="tiny muted">正在补齐历史记录…</p>}
             {(ha.tripUnavailable || ha.chargeUnavailable) && <p className="tiny muted">{ha.tripUnavailable && ha.chargeUnavailable ? 'LeapToHA 行程和充电记录暂不可用。' : ha.tripUnavailable ? 'LeapToHA 行程记录暂不可用。' : 'LeapToHA 充电记录暂不可用。'}</p>}
             {ha.historyUnavailable && <p className="tiny muted">HA Recorder 历史暂不可用。</p>}
@@ -113,7 +113,7 @@ export function HAConnect() {
           <div className="filter-row"><span>自动同步</span><Switch label="自动同步" checked={config.auto} action={() => model.ha.setConfig({ ...config, auto: !config.auto })} /></div>
           <button className="btn secondary sm" onClick={() => { setNote(''); setManual(false); setReauthorizing(true); }}>重新登录 HA</button>
         </Section>
-        <button className="btn accent" disabled={ha.syncing} onClick={() => { if (model.source !== 'hybrid') model.setSource('ha'); void ha.refresh(); }}>{ha.syncing ? '同步中…' : '立即同步'}</button>
+        <button className="btn accent" disabled={ha.syncing} onClick={() => { if (model.source !== 'hybrid') model.selectRecordSource('ha'); void ha.refresh(); }}>{ha.syncing ? '同步中…' : '立即同步'}</button>
         <button className="btn ghost" onClick={() => void model.ha.disconnect().catch(() => setNote('断开连接失败，请重试。'))}>断开连接</button>
       </> : <>
         <Section title={reauthorizing ? '重新登录 Home Assistant' : '连接 Home Assistant'}>

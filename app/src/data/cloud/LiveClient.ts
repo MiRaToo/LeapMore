@@ -328,6 +328,7 @@ function mapState(vehicleId: string, vin: string, payload: Record<string, unknow
   return {
     vehicleId,
     updatedAt: updated, reportedAt,
+    ...(t03 && raw.sts == null && data.sts == null && updated > 0 ? { recordingFallbackAt: updated } : {}),
     freshness: !updated ? 'unknown' : Date.now() - updated > 30 * 60_000 ? 'stale' : 'fresh',
     soc, rangeKm: range.km, rangeReadings: ranges,
     fuelPercent: fuel,

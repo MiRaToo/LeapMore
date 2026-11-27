@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { readDataset, readSetting, updateDataset } from '../../data/localDatabase';
 import { useSetting } from '../../data/preferences';
 import { failureFacts } from '../../data/serviceFailure';
 import { CarPictureOnly } from '../../data/cloud/LiveClient';
@@ -12,14 +13,19 @@ import type { MarketSelection } from './MarketPicker';
 
 export type Face = 'front' | 'rear' | 'left' | 'right' | 'top';
 type Pattern = 'solid' | 'stripe' | 'gradient' | 'carbon' | 'image';
-export type Decoration = { kind: Pattern; color: string; image?: string; x: number; y: number; scale: number; rotation: number; opacity: number };
-export type Wrap = Partial<Record<Face, Decoration>>;
+export type Decoration = { kind: Pattern; color: string; endColor?: string; image?: string; x: number; y: number; scale: number; rotation: number; opacity: number };
+export const slotCount = 4;
+export const defaultGradientEnd = '#0d1218';
+export type Wrap = Partial<Record<Face, Decoration | (Decoration | null)[]>>;
+export function slotsOf(face: Wrap[Face]): (Decoration | null)[] {
+  return Array.isArray(face) ? face : face ? [face] : [];
+}
 const emptyWrap: Wrap = {};
 const sampleTextures = new Map<string, string>();
 
 export function texture(face: Decoration) {
   if (face.image && face.kind === 'image') return face.image;
-  const key = face.kind === 'carbon' ? 'carbon' : face.kind + face.color;
+  const key = face.kind === 'carbon' ? 'carbon' : face.kind + face.color + (face.kind === 'gradient' ? face.endColor ?? defaultGradientEnd : '');
   const existing = sampleTextures.get(key);
   if (existing) return existing;
   const canvas = document.createElement('canvas');
@@ -28,7 +34,7 @@ export function texture(face: Decoration) {
   ctx.fillStyle = face.color;
   if (face.kind === 'gradient') {
     const gradient = ctx.createLinearGradient(0, 0, 256, 256);
-    gradient.addColorStop(0, face.color); gradient.addColorStop(1, '#0d1218');
+    gradient.addColorStop(0, face.color); gradient.addColorStop(1, face.endColor ?? defaultGradientEnd);
     ctx.fillStyle = gradient;
   }
   ctx.fillRect(0, 0, 256, 256);
@@ -54,9 +60,22 @@ function useVisualPreferences() {
   const [mode, setMode] = useSetting<'3d' | '2d'>('visualMode', '3d');
   const [background, setBackground] = useSetting('visualBackground', 'auto');
   const [quality, setQuality] = useSetting('visualQuality', 'high');
-  const [wraps, setWraps] = useSetting<Record<string, Wrap>>('wrap', {});
+  const { vehicleId, setToast } = useModelContext();
+  const queryClient = useQueryClient();
+  const key = 'vehicle-wrap:' + vehicleId;
+  const legacy = () => readSetting<Record<string, Wrap>>('wrap', {})[vehicleId] ?? emptyWrap;
+  const savedWrap = useQuery({ queryKey: [key], enabled: !!vehicleId, staleTime: Infinity,
+    queryFn: async () => (await readDataset<Wrap>(key)) ?? legacy() });
+  function setWrap(change: (previous: Wrap) => Wrap) {
+    if (!savedWrap.isSuccess) { setToast('车衣尚未读取，请稍后重试'); void savedWrap.refetch(); return; }
+    queryClient.setQueryData<Wrap>([key], previous => change(previous ?? emptyWrap));
+    void updateDataset<Wrap>(key, previous => change(previous ?? legacy())).catch(() => {
+      setToast('车衣未能保存到本机，请检查可用空间');
+      void queryClient.invalidateQueries({ queryKey: [key] });
+    });
+  }
   const [marketByVehicle, setMarketByVehicle] = useSetting<Record<string, MarketSelection>>('visualMarket', {});
-  return { mode, setMode, background, setBackground, quality, setQuality, wraps, setWraps, marketByVehicle, setMarketByVehicle };
+  return { mode, setMode, background, setBackground, quality, setQuality, wrap: savedWrap.data ?? emptyWrap, setWrap, marketByVehicle, setMarketByVehicle };
 }
 
 const Preferences = createContext<ReturnType<typeof useVisualPreferences> | null>(null);
@@ -66,9 +85,8 @@ export function VehicleVisualProvider({ children }: { children: ReactNode }) {
 
 export function useVehicleVisual(paused = false, visible = true, diagnostic = false) {
   const m = useModelContext();
-  const { mode: preferredMode, setMode, background, setBackground, quality, setQuality, wraps, setWraps, marketByVehicle, setMarketByVehicle } = useContext(Preferences)!;
+  const { mode: preferredMode, setMode, background, setBackground, quality, setQuality, wrap, setWrap, marketByVehicle, setMarketByVehicle } = useContext(Preferences)!;
   const mode = diagnostic ? '3d' : preferredMode;
-  const wrap = wraps[m.vehicleId] ?? emptyWrap;
   const saved = marketByVehicle[m.vehicleId];
   // Earlier demo selections sometimes stored a C10 illustration for another model.
   const market = saved?.image?.endsWith('/c10.png') && saved.model !== 'C10' ? undefined : saved;
@@ -106,7 +124,7 @@ export function useVehicleVisual(paused = false, visible = true, diagnostic = fa
   const marketImage = mode === '2d' ? market?.image : undefined;
   const image = marketImage || officialImage || fallback;
   const scene = background === 'auto' ? m.colorScheme === 'dark' ? 'night' : 'day' : background;
-  return { mode, setMode, background, scene, colorScheme: m.colorScheme, setBackground, quality, setQuality, wrap, setWraps, market, modelName, queryKey,
+  return { mode, setMode, background, scene, colorScheme: m.colorScheme, setBackground, quality, setQuality, wrap, setWrap, market, modelName, queryKey,
     setMarket: (next: MarketSelection) => setMarketByVehicle(previous => ({ ...previous, [m.vehicleId]: next })),
     paint, colors, image, fallback: marketImage ? undefined : fallback, cloud, visible, autoPicture, fetchingPhoto: photo.isFetching,
     paintOverride: m.hasCustomPaint || m.simulated ? m.paint.hex : '',
@@ -236,8 +254,9 @@ export function VehicleModel({ visual, home = false, editingWrap = false, onStat
   else if (visual.autoPicture) status = image ? '2d' : visual.fetchingPhoto ? 'loading' : 'unavailable';
   const wrapPayload = useMemo(() => {
     if (!viewer || !visible) return 'null';
-    const entries = Object.entries(wrap).filter((entry): entry is [Face, Decoration] => !!entry[1]);
-    return entries.length ? JSON.stringify({ version: 2, faces: Object.fromEntries(entries.map(([side, item]) => [side, { ...item, side, image: texture(item) }])) }) : 'null';
+    const faces = Object.fromEntries(Object.entries(wrap).map(([side, items]) => [side,
+      slotsOf(items).filter((item): item is Decoration => !!item).map(item => ({ ...item, image: texture(item) }))]));
+    return Object.keys(faces).length ? JSON.stringify({ version: 3, faces }) : 'null';
   }, [viewer, visible, wrap]);
   const appearance = useMemo(() => ({ t: 'appearance', background, paint: paintOverride, quality, wrap: wrapPayload }),
     [background, paintOverride, quality, wrapPayload]);

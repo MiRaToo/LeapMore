@@ -18,7 +18,7 @@ export function verifyHarmonyReleasePaths(hapPath) {
     if (/[\[\]*?]/.test(name)) throw new Error('Unsupported Harmony archive entry name');
     const data = run(['-p', hapPath, name]);
     const text = data.toString('latin1');
-    const matches = [...text.matchAll(/(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)[^\x00\s"'<>]{1,512}/g)];
+    const matches = [...text.matchAll(/(?:\/Users\/|\/home\/|\/var\/folders\/|[A-Za-z]:\\Users\\)[^\x00\s"'<>]{1,512}/g)];
     if (!matches.length) continue;
     const sections = elfSections(data);
     const locations = new Set(matches.map(match => sections.find(section => match.index >= section.start && match.index < section.end)?.name ?? 'file data'));

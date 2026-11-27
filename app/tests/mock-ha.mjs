@@ -19,7 +19,8 @@ const entry = (id, state, min = 0, extra = {}) => ({
   attributes: { friendly_name: id.split('.').at(-1), ...extra },
 });
 const groups = [
-  [entry('sensor.car_soc', 37, 30, { battery_min_temp: 12.5 }), entry('sensor.car_soc', 64, 3, { battery_min_temp: 19 })],
+  [entry('sensor.car_soc', 62, 55, { battery_min_temp: -2 }), entry('sensor.car_soc', 60, 53, { battery_min_temp: 0 }),
+    entry('sensor.car_soc', 37, 30, { battery_min_temp: 12.5 }), entry('sensor.car_soc', 64, 3, { battery_min_temp: 19 })],
   [entry('sensor.car_range', 288, 2)],
   [entry('sensor.fixture_energy_rank', '8%', 2)],
   [entry('sensor.fixture_rank_efficiency', 18.5, 2)],
@@ -193,10 +194,11 @@ wss.on('connection', socket => {
         tripDeleted = true;
         return ok({ vin, deleted });
       }
-      if (msg.type === 'leapmotor/trips/track' && msg.trip_id === 'ledger-test') {
-        const reply = () => ok({ vin, points: [[31.221, 121.53, 31, (at - 55 * minute) / 1000, 62],
-          [31.224, 121.534, 42, (at - 54 * minute) / 1000, 61], [31.228, 121.54, 68, (at - 53 * minute) / 1000, 60],
-          [null, null, 52, (at - 52 * minute) / 1000, 59]] });
+      if (msg.type === 'leapmotor/trips/track' && (msg.trip_id === 'ledger-test' || (msg.trip_id === 'active-trip' && fail === 'active-ledger'))) {
+        const start = at - (msg.trip_id === 'active-trip' ? 5 : 55) * minute;
+        const reply = () => ok({ vin, points: [[31.221, 121.53, 31, start / 1000, 62],
+          [31.224, 121.534, 42, (start + minute) / 1000, 61], [31.228, 121.54, 68, (start + 2 * minute) / 1000, 60],
+          [null, null, 52, (start + 3 * minute) / 1000, 59]] });
         if (fail === 'slow-track') return setTimeout(reply, 1400);
         return reply();
       }

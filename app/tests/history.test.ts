@@ -68,7 +68,7 @@ test('Known archive membership is scoped to the announced observation IDs', () =
   for (const [i, id] of ['a', 'b', 'other'].entries()) archive.observations[id] = {
     observation_id: id, vehicle_id: 'car', origin: 'leapmotor_cloud', fidelity: 'native_raw', field_schema: 'leapmotor.raw.v1',
     layout: 'signal_map', coordinate_system: 'gcj02', received_at_ms: at(i),
-    source_timestamps: {}, signals_raw: { '1318': 100 + i, '1319': 21, '2': 121 + i * .001, '3': 31 + i * .001 },
+    source_timestamps: {}, signals_raw: { '1182': i - 1, '1318': 100 + i, '1319': 21, '2': 121 + i * .001, '3': 31 + i * .001 },
   };
   archive.records['trip:first'] = {
     vehicle_id: 'car', kind: 'trip', phase: 'completed', record_id: 'first', revision: 1,
@@ -76,6 +76,7 @@ test('Known archive membership is scoped to the announced observation IDs', () =
   };
   archive.membership['trip:first'] = { coverage: 'partial', membership_revision: 1, observation_ids: ['a', 'b'] };
   assert.equal(deriveArchive(archive).trips[0].pointCount, 2);
+  assert.deepEqual(deriveArchive(archive).trips[0].batteryTemperatures, [{ at: at(0), value: -1 }, { at: at(1), value: 0 }]);
   assert.equal(deriveArchive(archive).trips[0].complete, false);
   archive.membership['trip:first'].coverage = 'complete';
   assert.equal(deriveArchive(archive).trips[0].complete, true);

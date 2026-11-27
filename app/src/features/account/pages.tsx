@@ -78,7 +78,7 @@ export function Login() {
     } catch { setCanResume(false); setNote('无法恢复已保存的会话，请重新登录。'); }
     finally { setBusy(null); }
   }
-  return <div className="login"><div className="logo logo-lockup" aria-label="LeapMore" />
+  return <div className="login"><img className="login-brand" src={asset('leaplink-icon-simple.png')} alt="LeapMore" width={76} height={76} />
     <h1>{model.expired ? '重新登录' : '欢迎回来'}</h1><p className="lede">登录零跑账号，开始用车。</p>
     <form className="form" onSubmit={e => { e.preventDefault(); void signIn(); }}>
       <div className="field"><span className="prefix">+86</span><input aria-label="手机号" placeholder="手机号" type="tel" inputMode="tel" autoComplete="tel-national" value={form.phone}

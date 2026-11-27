@@ -1,6 +1,11 @@
 package com.leapmore.app;
 
+import android.app.AlertDialog;
 import android.app.PendingIntent;
+import android.text.InputFilter;
+import android.text.InputType;
+import android.view.WindowManager;
+import android.widget.EditText;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -21,12 +26,25 @@ public abstract class VehicleTile extends TileService {
     public static final class Lock extends VehicleTile {}
     public static final class Find extends VehicleTile {}
 
+    public static final class Cool extends VehicleTile {}
+    public static final class Heat extends VehicleTile {}
+    public static final class Vent extends VehicleTile {}
+    public static final class Defrost extends VehicleTile {}
+    public static final class WindowClose extends VehicleTile {}
+    public static final class WindowVent extends VehicleTile {}
+
     enum Action {
         PREPARE("prepare", "一键备车", Prepare.class, R.drawable.leap_tile_prepare),
         PREPARE_SECOND("prepare-2", "一键备车 2", PrepareSecond.class, R.drawable.leap_tile_prepare),
         CLIMATE_ON("climate-on", "开启空调", ClimateOn.class, R.drawable.leap_widget_icon_fan),
         CLIMATE_OFF("climate-off", "关闭空调", ClimateOff.class, R.drawable.leap_widget_icon_fan),
         LOCK("lock-only", "锁车", Lock.class, R.drawable.leap_widget_icon_lock),
+        COOL("climate-cool", "极速降温", Cool.class, R.drawable.leap_widget_icon_fan),
+        HEAT("climate-heat", "极速升温", Heat.class, R.drawable.leap_widget_icon_fan),
+        VENT("climate-vent", "快速除味", Vent.class, R.drawable.leap_widget_icon_fan),
+        DEFROST("climate-def", "风挡除霜", Defrost.class, R.drawable.leap_widget_icon_fan),
+        WINDOWCLOSE("window-close", "关闭车窗", WindowClose.class, R.drawable.leap_tile_window),
+        WINDOWVENT("window-vent", "车窗通风", WindowVent.class, R.drawable.leap_tile_window),
         FIND("find", "鸣笛寻车", Find.class, R.drawable.leap_widget_icon_find);
 
         final String key, title;
@@ -95,14 +113,7 @@ public abstract class VehicleTile extends TileService {
         Runnable open = () -> {
             JSONObject target = target(action);
             if (target != null) {
-                feedback = "正在执行"; feedbackUntil = android.os.SystemClock.elapsedRealtime() + 30000;
-                render();
-                DirectQuickControl.run(this, action, target.optString("id"), message -> {
-                    feedback = message; feedbackUntil = android.os.SystemClock.elapsedRealtime() + 7500;
-                    render();
-                    android.widget.Toast.makeText(getApplicationContext(), action.title + " · " + message, android.widget.Toast.LENGTH_SHORT).show();
-                    new android.os.Handler(getMainLooper()).postDelayed(this::render, 7600);
-                });
+                execute(action, target, "", "");
                 return;
             }
             Intent intent = settings(this, action);
@@ -111,6 +122,49 @@ public abstract class VehicleTile extends TileService {
             } else startActivityAndCollapse(intent);
         };
         if (isSecure() && isLocked()) unlockAndRun(open); else open.run();
+    }
+
+    private void execute(Action action, JSONObject target, String approval, String pin) {
+        feedback = "正在处理"; feedbackUntil = android.os.SystemClock.elapsedRealtime() + 30000;
+        render();
+        DirectQuickControl.run(this, action, target.optString("id"), approval, pin, message -> {
+            if (message.matches("(confirm|pin):[0-9a-f]{64}")) {
+                feedbackUntil = 0;
+                render();
+                confirm(action, target, message);
+                return;
+            }
+            feedback = message; feedbackUntil = android.os.SystemClock.elapsedRealtime() + 7500;
+            render();
+            android.widget.Toast.makeText(this, action.title + " · " + message, android.widget.Toast.LENGTH_SHORT).show();
+            new android.os.Handler(getMainLooper()).postDelayed(this::render, 7600);
+        });
+    }
+
+    private void confirm(Action action, JSONObject target, String challenge) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("确认" + action.title + "？").setMessage(target.optString("title"))
+            .setNegativeButton("取消", null).setPositiveButton("发送", null);
+        EditText input = challenge.startsWith("pin:") ? new EditText(this) : null;
+        if (input != null) {
+            input.setSingleLine(true);
+            input.setHint("车辆操作密码");
+            input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+            input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)});
+            if (Build.VERSION.SDK_INT >= 26) input.setImportantForAutofill(android.view.View.IMPORTANT_FOR_AUTOFILL_NO);
+            builder.setView(input);
+        }
+        AlertDialog dialog = builder.create();
+        if (input != null) dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            String entered = input == null ? "" : input.getText().toString();
+            if (input != null && !entered.matches("[0-9]{4,6}")) { input.setError("请输入 4 至 6 位操作密码"); return; }
+            if (input != null) input.getText().clear();
+            dialog.dismiss();
+            if (isSecure() && isLocked()) return;
+            execute(action, target, challenge, entered);
+        }));
+        showDialog(dialog);
     }
 
     static void refresh(Context context) {

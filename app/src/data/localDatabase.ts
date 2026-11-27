@@ -36,6 +36,7 @@ async function mutate(change: (store: IDBObjectStore) => void) {
 }
 export const saveDataset = (key: string, value: unknown) => mutate(store => store.put(value, key));
 export const deleteDataset = (key: string) => mutate(store => store.delete(key));
+export const deleteDatasetsWithPrefix = (prefix: string) => mutate(store => store.delete(IDBKeyRange.bound(prefix, prefix + '\uffff')));
 
 export async function updateDataset<T>(key: string, update: (value: T | undefined) => T): Promise<T> {
   let value: T;

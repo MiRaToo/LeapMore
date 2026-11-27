@@ -1,4 +1,4 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import type { Frame } from '../data/ha/measurements';
@@ -9,7 +9,11 @@ type Binding = { account: string; id: string; vin: string; name: string };
 type Reading = { ownsSampling: boolean; report?: CarState; reportVersion?: number };
 type State = Reading & { phase: 'idle' | 'starting' | 'recording' | 'ended' | 'interrupted'; scope: string; vehicle: string; vehicleId: string; lastSample: number; note: string };
 type Config = { account: string; cars: { id: string; vin: string; location: boolean }[] };
+export type RecordingShortcut = { id: string; target: string; start: boolean };
 interface TripPlugin {
+  addListener(event: 'recordingShortcut', listener: () => void): Promise<PluginListenerHandle>;
+  pendingShortcut(): Promise<Partial<RecordingShortcut>>;
+  applyShortcut(options: { id: string; demo: boolean; issue?: string }): Promise<void>;
   configure(options: Config): Promise<void>;
   reading(car: Binding): Promise<Reading>;
   state(car: Binding): Promise<State>;
@@ -21,6 +25,61 @@ interface TripPlugin {
 }
 const plugin = registerPlugin<TripPlugin>('LeapTrip');
 export const supportsManualTrips = () => Capacitor.getPlatform() === 'ios' && Capacitor.isPluginAvailable('LeapTrip');
+
+export function usePendingRecordingShortcut() {
+  const [request, setRequest] = useState<RecordingShortcut>();
+  useEffect(() => {
+    if (!supportsManualTrips()) return;
+    let live = true;
+    function refresh() {
+      void plugin.pendingShortcut().then(next => {
+        if (live && next.id && next.target && typeof next.start === 'boolean') {
+          setRequest({ id: next.id, target: next.target, start: next.start });
+        }
+      }).catch(() => {});
+    }
+    const listener = plugin.addListener('recordingShortcut', refresh);
+    void listener.then(refresh).catch(() => {});
+    return () => { live = false; void listener.then(handle => handle.remove()).catch(() => {}); };
+  }, []);
+  return request;
+}
+
+export function applyRecordingShortcut(request: RecordingShortcut, demo: boolean, issue?: string, binding?: Binding) {
+  const apply = () => plugin.applyShortcut({ id: request.id, demo, issue });
+  return binding && !issue ? withVehicle(binding, apply) : apply();
+}
+
+// The demo shares one UI session across pages without giving it native sampling ownership.
+export function useDemoTripRecording(vehicleId: string, name: string, phoneSource: boolean) {
+  const [session, setSession] = useState<State>();
+  const available = !!vehicleId && phoneSource;
+  const active = available && session?.phase === 'recording';
+  useEffect(() => {
+    if (!available) setSession(undefined);
+    if (!active) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setSession(previous => previous?.phase === 'recording' ? { ...previous, lastSample: Date.now() } : previous);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [available, active]);
+  const idle: State = { vehicleId, vehicle: name, phase: 'idle', lastSample: 0, note: '', scope: vehicleId, ownsSampling: false };
+  const state = active || session?.vehicleId === vehicleId ? session : idle;
+  function start() {
+    if (vehicleId) setSession(previous => previous?.phase === 'recording' ? previous : { ...idle, phase: 'recording', lastSample: Date.now() });
+  }
+  function toggle() {
+    if (!available) return;
+    if (active) setSession(previous => previous && { ...previous, phase: 'ended' });
+    else start();
+  }
+  function setDemoRecording(wanted: boolean) {
+    if (wanted) start();
+    else setSession(previous => previous?.vehicleId === vehicleId && previous.phase === 'recording'
+      ? { ...previous, phase: 'ended' } : previous);
+  }
+  return { available, state, active, busy: false, issue: '', start, toggle, setDemoRecording };
+}
 
 // Finish an in-flight foreground read before handing its vehicle to the recorder. Queued reads check
 // ownership inside the lock, including explicit refreshes and the first read after a WebView reload.

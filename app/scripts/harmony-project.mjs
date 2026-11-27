@@ -4,7 +4,7 @@ const entry = 'openharmony/entry/src/main';
 const { version, buildNumber } = JSON.parse(readFileSync('package.json', 'utf8'));
 const overlay = 'native/harmony';
 const ets = entry + '/ets';
-for (const [file, folder] of [['LeapNative.ets', 'plugins'], ['WidgetCard.ets', 'widget'], ['WidgetAbility.ets', 'widget']]) {
+for (const [file, folder] of [['LeapNative.ets', 'plugins'], ['CheckIn.ets', 'plugins'], ['WidgetCard.ets', 'widget'], ['WidgetAbility.ets', 'widget']]) {
   mkdirSync(ets + '/' + folder, { recursive: true });
   copyFileSync(overlay + '/' + file, ets + '/' + folder + '/' + file);
 }
@@ -28,6 +28,10 @@ edit(ets + '/pages/Index.ets', source => {
 edit(ets + '/pages/Index.ets', source => source.includes('new LeapSettings(') ? source : source
   .replace('LeapAuth, LeapNet, LeapVault, LeapWidget', 'LeapAuth, LeapNet, LeapSettings, LeapVault, LeapWidget')
   .replace("{ pluginName: 'LeapNet', pluginObject: new LeapNet() },", "{ pluginName: 'LeapNet', pluginObject: new LeapNet() },\n      { pluginName: 'LeapSettings', pluginObject: new LeapSettings(context) },"));
+edit(ets + '/pages/Index.ets', source => source.includes("from '../plugins/CheckIn'") ? source : source
+  .replace("import { MainPage", "import { CheckInSurface, LeapCheckIn } from '../plugins/CheckIn';\nimport { MainPage")
+  .replace("{ pluginName: 'LeapNet', pluginObject: new LeapNet() },", "{ pluginName: 'LeapNet', pluginObject: new LeapNet() },\n      { pluginName: 'LeapCheckIn', pluginObject: new LeapCheckIn(context) },")
+  .replace('    RelativeContainer() {', '    RelativeContainer() {\n      CheckInSurface()'));
 edit(ets + '/entryability/EntryAbility.ets', source => {
   if (source.includes('acceptWidgetAction')) return source;
   return source.replace("const DOMAIN", "import { acceptWidgetAction } from '../plugins/LeapNative';\n\nconst DOMAIN")

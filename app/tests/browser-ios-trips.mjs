@@ -11,7 +11,7 @@ function installFixture() {
   const account = sessionStorage.getItem('trip-fixture-account') ?? crypto.randomUUID();
   sessionStorage.setItem('trip-fixture-account', account);
   const scope = JSON.stringify([account, vehicle.id, vehicle.vin]);
-  for (const [key, value] of Object.entries({ mode: 'cloud', activeVehicle: vehicle.id, source: 'phone', theme: 'light', recordListViews: { trips: 'simple', charges: 'simple' } })) {
+  for (const [key, value] of Object.entries({ mode: 'cloud', activeVehicle: vehicle.id, ...(!sessionStorage.getItem('android') && {source:'phone'}), theme: 'light', recordListViews: { trips: 'simple', charges: 'simple' } })) {
     localStorage.setItem('leapmore.' + key, JSON.stringify(value));
   }
   const creds = { account: { userId: account, token: 'fixture', expiresAt: Date.now() + 86400000 },
@@ -38,14 +38,58 @@ function installFixture() {
     for (let i = 0; i <= 12; i++) frame(t + (i + 1) * 60000, 'driving', 12080 + i * .8, 48);
     frame(t + 14 * 60000, 'parked', 12090.4, 0);
   }
-  const methods = { LeapTrip: ['configure','reading','state','start','stop','batch','ack','clear'], LeapVault: ['get','set','remove'],
-    CapacitorHttp: ['request'], LeapWidget: ['configure','update','consumeDemo'], App: ['addListener','getLaunchUrl','getInfo'] };
+  const methods = { LeapTrip: ['configure','reading','state','start','stop','batch','ack','clear','pendingShortcut','applyShortcut','addListener','removeListener'], LeapVault: ['get','set','remove'],
+    CapacitorHttp: ['request'], LeapWidget: ['configure','update','consumeDemo'], App: ['addListener','removeListener','getLaunchUrl','getInfo'],
+    Browser: ['addListener','removeListener','close'] };
   window.webkit = { messageHandlers: { bridge: {} } };
   if (sessionStorage.getItem('older-ios')) delete methods.LeapTrip;
-  if (sessionStorage.getItem('android')) window.androidBridge = {};
+  const listeners = new Map();
+  if (sessionStorage.getItem('android')) {
+    window.androidBridge = {};
+    methods.LeapRecorder = ['addListener','removeListener','getDiagnostics','start','stop','setDelay'];
+  }
+  const emitNative = (event, payload) => {
+    for (const listener of listeners.values()) if (listener.event === event) listener.cb(payload);
+  };
+  let shortcut;
+  window.requestRecordingShortcut = (index, start) => {
+    const car = cars[index];
+    shortcut = { id: crypto.randomUUID(), target: JSON.stringify(['cloud:' + account, car.id, car.vin]), start };
+    window.shortcutResult = null;
+    emitNative('recordingShortcut', {});
+  };
+  window.androidTick = km => {
+    window.androidOdometer = km;
+    emitNative('appStateChange', {isActive:false});
+    emitNative('poll', {scope:sessionStorage.getItem('android-running')});
+  };
+  window.androidForeground = () => emitNative('appStateChange', {isActive:true});
   window.Capacitor = {
-    PluginHeaders: Object.entries(methods).map(([name, list]) => ({ name, methods: list.map(name => ({ name, rtype: 'promise' })) })),
-    nativeCallback: () => 'fixture', nativePromise: async (plugin, method, opts) => {
+    PluginHeaders: Object.entries(methods).map(([name, list]) => ({ name, methods: list.map(name => ({ name, rtype: name === 'addListener' ? 'callback' : 'promise' })) })),
+    nativeCallback: (plugin, method, opts, cb) => {
+      const id = crypto.randomUUID();
+      if (['LeapRecorder','LeapTrip','App'].includes(plugin)) listeners.set(id, { event: opts.eventName, cb });
+      return id;
+    }, nativePromise: async (plugin, method, opts) => {
+      if (plugin === 'LeapRecorder') {
+        const scope = sessionStorage.getItem('android-running');
+        if (method === 'getDiagnostics') return { running: !!scope && scope === opts.scope,
+          sessions: JSON.parse(sessionStorage.getItem('android-sessions-' + opts.scope) ?? '[]') };
+        if (method === 'removeListener') listeners.delete(opts.callbackId);
+        if (method === 'start' || method === 'stop') {
+          const running = method === 'start', reason = running ? '' : opts?.reason || 'user';
+          if (running) {
+            sessionStorage.setItem('android-running', opts.scope);
+            sessionStorage.setItem('android-starts', 1 + Number(sessionStorage.getItem('android-starts')));
+          } else {
+            sessionStorage.removeItem('android-running');
+            sessionStorage.setItem('android-sessions-' + scope, JSON.stringify([{reason}]));
+          }
+          emitNative('status', {running,reason,scope: running ? opts.scope : scope});
+        }
+        return {};
+      }
+      if (plugin === 'App' && method === 'removeListener') listeners.delete(opts.callbackId);
       if (plugin === 'LeapVault') return method === 'get' && opts.key === 'leapmotor-session' ? { value: JSON.stringify(creds) } : {};
       if (plugin === 'CapacitorHttp') {
         const path = new URL(opts.url).pathname;
@@ -56,14 +100,28 @@ function installFixture() {
           count(v => v.web[car.id] = (v.web[car.id] ?? 0) + 1);
           if (window.holdTripQuery) await new Promise(resolve => { window.releaseTripQuery = () => { window.holdTripQuery = false; resolve(); }; });
           data = {vin:car.vin,signalMap:{sts:Date.now(),1010:0,100003:car === second ? 34 : 65}};
+          if (window.androidOdometer) Object.assign(data.signalMap, {1318:window.androidOdometer,1010:1,1319:45});
         }
         return {status:200, data:{code:0,data}};
       }
       if (plugin !== 'LeapTrip') return {};
+      if (method === 'removeListener') { listeners.delete(opts.callbackId); return {}; }
+      if (method === 'pendingShortcut') return shortcut ?? {};
+      if (method === 'applyShortcut') {
+        if (!shortcut || opts.id !== shortcut.id) throw Error('快捷指令已失效');
+        const requested = shortcut; shortcut = undefined;
+        window.shortcutResult = opts.issue ?? 'ok';
+        if (opts.issue) throw Error(opts.issue);
+        if (requested.start !== (status.phase === 'recording')) {
+          await window.Capacitor.nativePromise('LeapTrip', requested.start ? 'start' : 'stop', {account, id:vehicle.id, vin:vehicle.vin});
+        }
+        return {};
+      }
       if (method === 'configure') { active = opts.account === account && opts.cars.some(c => c.id === vehicle.id); return {}; }
       if (opts.account !== account || !cars.some(c => c.id === opts.id && c.vin === opts.vin)) throw Error('车辆未绑定');
       if (method === 'start') {
         if (!active || opts.id !== vehicle.id) throw Error('车辆未授权');
+        if (window.denyNextTripStart) { window.denyNextTripStart = false; throw Error('系统暂未允许后台记录，请稍后重试'); }
         const previousSample = status.lastSample;
         const lastSample = Math.max(Date.now(), previousSample + 2), charging = window.tripActivity === 'charge';
         count(v=>{ v.start++; v.native++; });
@@ -126,6 +184,8 @@ try {
   await b.send('Page.addScriptToEvaluateOnNewDocument',{source:'('+ installFixture.toString() +')()'});
   await b.navigate(url+'#/records');
   await phase('idle'); await until('document.body.innerText.includes("10.4 km")');
+  assert.ok(await b.run('document.querySelector(".manual-trip").getBoundingClientRect().height <= 72'), '待记录控件应保持紧凑');
+  assert.ok(await b.run('document.querySelector(".manual-trip button").getBoundingClientRect().height >= 44'), '缩小记录卡后仍应保留按钮的触控区域');
   await capture('trip-idle');
   const route = async path => { await b.run('location.hash=' + JSON.stringify(path)); };
   await route('/home'); await until(`!!document.querySelector('.hero-tools button[aria-label="刷新"]:not(:disabled)')`);
@@ -179,18 +239,108 @@ try {
   assert.equal(await b.run('document.querySelector(".manual-trip time").dateTime'),timestamp);
   await b.click('.manual-trip button'); await phase('recording');
   await b.click('.manual-trip button'); await phase('ended');
+  const selectSource = async label => {
+    await route('/records-source'); await until('!!document.querySelector(".source-opt")');
+    await b.run(`[...document.querySelectorAll('.source-opt')].find(el => el.querySelector('b').textContent === ${JSON.stringify(label)}).click()`);
+  };
+  const starts = await b.run('tripCounts().start');
+  await selectSource('关闭记录');
+  await route('/records'); await until('document.body.innerText.includes("10.4 km")');
+  assert.equal(await b.run('!!document.querySelector(".manual-trip,.recording")'), false);
+  await b.run('requestRecordingShortcut(0, true)'); await until('window.shortcutResult?.includes("启用手机记录")');
+  await selectSource('手机记录');
+  await until('tripCounts().start === ' + (starts + 1));
+  await phase('recording');
+  assert.equal(await b.run("document.querySelector('.manual-trip-name b').textContent"),'后台记录');
+  await selectSource('手机记录');
+  await route('/records'); await phase('recording');
+  assert.equal(await b.run('tripCounts().start'), starts + 1);
+  await b.click('.manual-trip button'); await phase('ended');
+  await route('/records-source'); await phase('ended');
+  await b.run('window.denyNextTripStart = true');
+  await selectSource('手机记录');
+  await until('document.querySelector(".manual-trip-note")?.textContent.includes("系统暂未允许")');
+  assert.equal(await b.run('document.querySelector(".manual-trip button").textContent'),'开始记录');
+  await b.click('.manual-trip button'); await phase('recording');
+  await route('/records?tab=charges'); await phase('recording');
+  await b.click('.manual-trip button'); await phase('ended');
+  const shortcutStarts = await b.run('tripCounts().start');
+  await b.run('requestRecordingShortcut(0, true)'); await phase('recording');
+  await b.run('requestRecordingShortcut(0, true)'); await until('window.shortcutResult === "ok"');
+  assert.equal(await b.run('tripCounts().start'), shortcutStarts + 1);
+  await b.run('requestRecordingShortcut(1, false)'); await until('window.shortcutResult?.includes("另一辆车")');
+  await b.run('requestRecordingShortcut(0, false)'); await phase('ended');
+  await b.run('requestRecordingShortcut(0, false)'); await until('window.shortcutResult === "ok"');
   await b.run("sessionStorage.setItem('older-ios','1')"); await b.reload();
   await until('!!document.querySelector(".period-summary")'); assert.equal(await b.run('!!document.querySelector(".manual-trip")'),false);
   await route('/charging'); await until('!!document.querySelector(".charging-status")');
   assert.equal(await b.run('!!document.querySelector(".manual-trip")'),false);
   await route('/records?tab=charges'); await until('!!document.querySelector(".period-summary")');
   assert.equal(await b.run('!!document.querySelector(".manual-trip")'),false);
-  await b.run("sessionStorage.removeItem('older-ios');sessionStorage.setItem('android','1')"); await b.reload();
+  await b.run("sessionStorage.removeItem('older-ios');sessionStorage.setItem('android','1');localStorage.removeItem('leapmore.source');localStorage.removeItem('leapmore.chosePhoneRecording')"); await b.reload();
+  await until('!!document.querySelector(".period-summary")');
+  assert.equal(await b.run("sessionStorage.getItem('android-starts')"), null);
+  // Older releases wrote their hybrid default even before the first source selection.
+  await b.run("localStorage.setItem('leapmore.source', JSON.stringify('hybrid'))"); await b.reload();
+  await until('document.body.innerText.includes("开启后台记录")');
+  assert.equal(await b.run("sessionStorage.getItem('android-starts')"), null);
+  await selectSource('手机记录');
+  await until('document.body.innerText.includes("手机后台记录已启动")');
+  await b.run('androidTick(5101)');
+  await until(`import('/src/data/localDatabase.ts').then(async db => (await db.readDataset('cloud-frames:' +
+    sessionStorage.getItem('trip-fixture-account') + ':review-c10'))?.some(frame => frame.data.odometer === 5101))`);
+  await b.run('androidForeground()');
+  await selectSource('手机记录');
+  await route('/records'); await b.reload();
+  await until('!!document.querySelector(".period-summary")');
+  assert.equal(await b.run("Number(sessionStorage.getItem('android-starts'))"), 1);
+  await route('/background-guide');
+  await until('[...document.querySelectorAll("button")].some(el => el.textContent === "停止后台记录")');
+  await b.run('[...document.querySelectorAll("button")].find(el => el.textContent === "停止后台记录").click()');
+  await route('/records'); await b.reload();
+  await until('document.body.innerText.includes("开启后台记录")');
+  assert.equal(await b.run("sessionStorage.getItem('android-running')"), null);
+  await selectSource('手机记录 + HA 同步');
+  await until('location.hash === "#/ha" && !!sessionStorage.getItem("android-running")');
+  await selectSource('HA 同步');
+  await until('!sessionStorage.getItem("android-running")');
+  await selectSource('手机记录');
+  await until('!!sessionStorage.getItem("android-running")');
+  await selectSource('关闭记录');
+  await until('!sessionStorage.getItem("android-running")');
+  await selectSource('手机记录');
+  await route('/records');
   await until('!!document.querySelector(".period-summary")'); assert.equal(await b.run('!!document.querySelector(".manual-trip")'),false);
   await route('/charging'); await until('!!document.querySelector(".charging-status")');
   assert.equal(await b.run('!!document.querySelector(".manual-trip")'),false);
   await route('/records?tab=charges'); await until('!!document.querySelector(".period-summary")');
   assert.equal(await b.run('!!document.querySelector(".manual-trip")'),false);
+  // Reopen an Android store written by the version that persisted a gap after 90 s.
+  await b.run(`(async () => {
+    const { saveDataset } = await import('/src/data/localDatabase.ts');
+    const at = Date.now() - 29 * 60000;
+    const samples = [[0,0],[20,0],[420,4],[460,5],[720,8],[760,9],[1260,14],[1280,14],[1300,14]];
+    const frames = samples.flatMap(([s, km], i) => {
+      const row = { at: at + s * 1000, changed: ['motion', 'odometer'],
+        data: { motion: i === samples.length - 1 ? 'parked' : 'driving', odometer: 5000 + km } };
+      return [1,3,5].includes(i) ? [row, { at: row.at + 1, changed: [], data: {} }] : [row];
+    });
+    await saveDataset('cloud-frames:' + sessionStorage.getItem('trip-fixture-account') + ':review-c10', frames);
+  })()`);
+  await route('/records?tab=trips'); await b.reload();
+  await until('document.querySelector(".record-total")?.textContent === "1 段 · 14.0 km"');
+  assert.equal(await b.run('document.querySelectorAll(".trip-row").length'), 1);
+  await b.click('.trip-row');
+  await until('document.querySelector(".trip-info")?.innerText.includes("14.0")');
+  const detailHash = await b.run('location.hash');
+  await selectSource('关闭记录');
+  await until('!sessionStorage.getItem("android-running")');
+  await route('/records'); await b.reload();
+  await until('document.querySelector(".record-total")?.textContent === "1 段 · 14.0 km"');
+  assert.equal(await b.run('!!document.querySelector(".recording,.manual-trip")'), false);
+  assert.equal(await b.run('!!document.querySelector(".record-range-toggle")'), true);
+  await b.click('.trip-row'); await until('document.querySelector(".trip-info")?.innerText.includes("14.0")');
+  assert.equal(await b.run('location.hash'), detailHash);
   assert.deepEqual(b.errors,[]);
   console.log('通过：行程与充电同步、在途交接、同车零额外车况请求、换车隔离、停止恢复、中断续录及平台隔离');
 } finally { await b.close(); }

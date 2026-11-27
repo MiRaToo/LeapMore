@@ -8,8 +8,11 @@ import { preparationContent, permitsCommand } from '../../src/data/cloud/prepara
 import type { PreparationPreset } from '../../src/data/cloud/preparation';
 import { sha256Hex } from '../../src/data/cloud/liveCrypto';
 
+import { quickClimatePreset } from '../../src/data/cloud/climatePresets';
+
 export interface QuickHost {
   input(): string;
+  enteredPin?(): string;
   vault(key: string): string | null;
   session(previous: string, next: string): boolean;
   http(request: string): string;
@@ -18,9 +21,8 @@ export interface QuickHost {
 declare global { var QuickHost: QuickHost; }
 type Entry = {id: string; title: string; preset: boolean; definition?: PreparationPreset; demoBlocked?: string; demoControl?: boolean};
 const invalid = '绑定的车辆或预设已不可用';
-const authorize = '请先为此车设置「发送前不确认」并保存操作密码';
 
-async function execute(action: string, target: string) {
+async function execute(action: string, target: string, approval: string) {
   const entry = (): Entry => {
     const value = JSON.parse(QuickHost.input() || 'null') as Entry | null;
     if (!value || value.id !== target || value.preset !== (action === 'prepare' || action === 'prepare-2')) throw new RemoteCommandError(invalid);
@@ -29,10 +31,21 @@ async function execute(action: string, target: string) {
   const current = entry();
   const [profile, vehicleId, vin, presetId] = JSON.parse(target) as string[];
   if (!vehicleId || !vin || current.definition?.id !== presetId) throw new RemoteCommandError(invalid);
-  if (!['prepare', 'prepare-2', 'lock-only', 'climate-on', 'climate-off', 'find'].includes(action)) throw new RemoteCommandError(invalid);
+  const climatePreset = quickClimatePreset(action);
+  const windowPosition = action === 'window-close' ? 'closed' : action === 'window-vent' ? 'vent' : null;
+  if (!climatePreset && !windowPosition && !['prepare', 'prepare-2', 'lock-only', 'climate-on', 'climate-off', 'find'].includes(action)) throw new RemoteCommandError(invalid);
+  // A native confirmation is scoped to the exact action, target and configuration shown.
+  async function userApproved(method: 'confirm' | 'pin') {
+    const challenge = method + ':' + await sha256Hex(JSON.stringify([method, action, current]));
+    if (approval === challenge) return true;
+    if (approval) throw new RemoteCommandError('控车配置已变更，请重新操作');
+    QuickHost.finish(challenge, '');
+    return false;
+  }
   if (profile === 'demo') {
     if (action !== 'lock-only' && current.demoControl === false) throw new RemoteCommandError('车辆控制未授权');
     if (current.demoBlocked) throw new RemoteCommandError(current.demoBlocked);
+    if (!await userApproved('confirm')) return;
     QuickHost.finish('模拟已执行', JSON.stringify({ vehicleId, action, preset: current.definition }));
     return;
   }
@@ -41,13 +54,17 @@ async function execute(action: string, target: string) {
   let session = JSON.parse(original || 'null') as LiveVehicles | null;
   if (!session || profile !== 'cloud:' + session.account.userId) throw new RemoteCommandError('请先登录绑定车辆的账号');
   const scope = await sha256Hex(JSON.stringify([session.account.userId, vin.toUpperCase()]));
-  function password() {
+  function credentials() {
     const prefs = read<{ mode: string; saved: boolean }>('remote-control:mode:' + scope);
-    const pin = prefs?.mode === 'instant' && prefs.saved && read<string>('remote-control:pin:' + scope);
-    if (!pin || !/^\d{4,6}$/.test(pin)) throw new RemoteCommandError(authorize);
-    return pin;
+    const saved = (prefs?.mode === 'instant' || prefs?.mode === 'reuse') && prefs.saved && read<string>('remote-control:pin:' + scope);
+    return { mode: prefs?.mode, saved: typeof saved === 'string' && /^\d{4,6}$/.test(saved) ? saved : '' };
   }
-  const pin = password();
+  const auth = credentials();
+  if (!auth.saved || auth.mode !== 'instant') {
+    if (!await userApproved(auth.saved ? 'confirm' : 'pin')) return;
+  } else if (approval) throw new RemoteCommandError('控车配置已变更，请重新操作');
+  const pin = auth.saved || QuickHost.enteredPin?.() || '';
+  if (!/^\d{4,6}$/.test(pin)) throw new RemoteCommandError('请输入 4 至 6 位操作密码');
   const accountId = session.account.userId, deviceId = session.deviceId;
   function save(next: LiveVehicles) {
     const encoded = JSON.stringify(next);
@@ -76,17 +93,19 @@ async function execute(action: string, target: string) {
     const latest = read<LiveVehicles>('leapmotor-session');
     if (latest?.account.userId !== active.account.userId || latest.deviceId !== active.deviceId ||
         latest.car.accessToken !== active.car.accessToken) throw new CloudSessionExpired();
-    if (JSON.stringify(entry()) !== JSON.stringify(current) || password() !== pin) throw new RemoteCommandError(invalid);
+    if (JSON.stringify(entry()) !== JSON.stringify(current) || JSON.stringify(credentials()) !== JSON.stringify(auth)) throw new RemoteCommandError(invalid);
   };
   const guard = { throwIfAborted: checkSession } as AbortSignal;
   let submitted = false;
   try {
     const car = (await client.getVehicles()).find(car => car.id === vehicleId && car.vin === vin);
     if (!car) throw new RemoteCommandError(invalid);
-    const commandId = action.startsWith('prepare') ? 360 : action === 'find' ? 120 : action === 'lock-only' ? 110 : 170;
+    const commandId = action.startsWith('prepare') ? 360 : action === 'find' ? 120 : action === 'lock-only' ? 110 : windowPosition ? 230 : 170;
     if (!permitsCommand(car, commandId)) throw new RemoteCommandError('此车未授权该操作');
     let command: RemoteCommand;
     if (current.definition) command = { kind: 'prepare', content: preparationContent(current.definition, car) };
+    else if (windowPosition) command = { kind: 'window', position: windowPosition };
+    else if (climatePreset) command = { kind: 'climate', on: true, preset: true, ...climatePreset[2] };
     else if (action === 'find') command = { kind: 'find' };
     else {
       const state = await client.getState(vehicleId, 6000);
@@ -111,8 +130,8 @@ async function execute(action: string, target: string) {
   }
 }
 
-export function run(action: string, target: string) {
-  void execute(action, target).catch(error => QuickHost.finish(error instanceof CloudSessionExpired ? '登录已失效，请打开 App 刷新登录' :
+export function run(action: string, target: string, approval = '') {
+  void execute(action, target, approval).catch(error => QuickHost.finish(error instanceof CloudSessionExpired ? '登录已失效，请打开 App 刷新登录' :
     error instanceof RemoteCommandError ? error.message : '无法连接车辆服务，请稍后重试', ''));
 }
 

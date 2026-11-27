@@ -23,6 +23,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LeapAuthPlugin.class);
         registerPlugin(LeapWidgetPlugin.class);
         registerPlugin(LeapSettingsPlugin.class);
+        registerPlugin(LeapCheckInPlugin.class);
         registerPlugin(LeapRecorderPlugin.class);
         super.onCreate(state);
         getWindow().getDecorView().post(() -> LeapWidget.publishPickerPreviews(this));

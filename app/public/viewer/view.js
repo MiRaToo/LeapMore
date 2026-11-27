@@ -1,5 +1,5 @@
 // 包装页只调用查看器能力，模型与查看器文件保持原样。版本与 car3d.py 同步。
-const WRAPPER_VERSION = 32;
+const WRAPPER_VERSION = 33;
 const q = new URLSearchParams(window.viewerParams||location.search);
 const year = q.get("year");
 let homeView = q.has('home');
@@ -182,7 +182,8 @@ function setPaint(hex){
 }
 // 只改车漆着色器，不修改共享模型文件或玻璃、饰条材质。
 const wrapSides=["left","right","top","front","rear"];
-let wrapSerial=0,wrapConfig=null,wrapTexture=null,wrapAtlasRects=new Map();const wrapImages=new Map(),wrapSources=new Map(),wrapPendingSources=new Map();
+let wrapSerial = 0, wrapConfig = null, wrapTexture = null, wrapApplying = 0;
+const wrapAtlasRects = new Map(), wrapImages = new Map(), atlasLayers = new Map();
 const wrapMaterials=new Set();let wrapBounds=null,wrapCar=null;
 function carBounds(){
   const car=window.car;if(wrapCar===car&&wrapBounds)return wrapBounds;let bounds=null;
@@ -255,25 +256,7 @@ if(haWrapTopEnabled>0.5&&all(greaterThanEqual(wrapUV,vec2(0.0)))&&all(lessThanEq
   original.needsUpdate=true;
   return original;
 }
-function updateWrap(){
-  if(!wrapConfig)return false;const box=carBounds();if(!box)return false;
-  const centerBase=box.min.clone().add(box.max).multiplyScalar(.5),corners=[];
-  for(const x of [box.min.x,box.max.x])for(const y of [box.min.y,box.max.y])for(const z of [box.min.z,box.max.z])corners.push(centerBase.clone().set(x,y,z));
-  const extent=axis=>{const values=corners.map(p=>p.dot(axis));return Math.max(...values)-Math.min(...values)};
-  const values={};
-  for(const side of wrapSides){const config=wrapConfig.faces[side],image=wrapImages.get(side),frame=config&&wrapFrame(side,box);if(!config||!image||!frame)continue;
-    const center=centerBase.clone(),span=extent(frame.u),height=extent(frame.v);
-    const angle=config.rotation*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle);
-    let width=span*config.scale/100;
-    if(side==='top'&&config.pattern&&config.scale>100){
-      // 保留 100% 以内的贴图比例，最大档按旋转后的车宽、车长同时覆盖。
-      const across=span*Math.abs(cos)+height*Math.abs(sin),along=span*Math.abs(sin)+height*Math.abs(cos);
-      const fullWidth=Math.max(across,along*image.width/image.height);
-      width+=Math.max(0,fullWidth*1.01-span*1.8)*(config.scale-100)/80;
-    }
-    center.addScaledVector(frame.u,(config.x/100-.5)*span).addScaledVector(frame.v,(config.y/100-.5)*height);
-    values[side]={center,frame,size:[Math.max(.01,width),Math.max(.01,width*image.height/image.width)],rotation:[cos,sin],opacity:config.opacity/100};
-  }
+function updateWrap(values, centerBase, box){
   if(!values.top)restoreRoofGlass();
   window.car.traverse(node=>{
     const top=values.top,glass=top&&roofGlassLayer(node,box);
@@ -293,34 +276,175 @@ function updateWrap(){
     for(const side of wrapSides){const p=wrapUniforms(side),v=values[side];Object.assign(m.uniforms,{haWrapTexture:{value:wrapTexture},[p+'Center']:{value:v?.center||centerBase},[p+'U']:{value:v?.frame.u||centerBase},[p+'V']:{value:v?.frame.v||centerBase},[p+'N']:{value:v?.frame.n||centerBase},[p+'Size']:{value:v?.size||[1,1]},[p+'Rotation']:{value:v?.rotation||[1,0]},[p+'Rect']:{value:wrapAtlasRects.get(side)||[0,0,0,0]},[p+'Opacity']:{value:v?.opacity||0}});}
   }});redraw();return wrapMaterials.size>0;
 }
-async function setWrap(value){
-  if(!value){++wrapSerial;wrapConfig={version:2,faces:{}};restoreRoofGlass();for(const m of wrapMaterials){m.uniforms.haWrapTexture.value=null;for(const side of wrapSides)m.uniforms[wrapUniforms(side)+'Opacity'].value=0;}wrapTexture?.dispose();wrapTexture=null;wrapImages.clear();wrapSources.clear();wrapPendingSources.clear();wrapAtlasRects.clear();redraw();return true;}
-  let faces=value.version===2&&value.faces&&typeof value.faces==='object'?value.faces:(value.image?{[wrapSides.includes(value.side)?value.side:'left']:value}:null);if(!faces)return false;
-  const normalized={};let total=0;
-  for(const side of wrapSides){const face=faces[side];if(!face)continue;if(!['left','right','top','front','rear'].includes(face.side||side))return false;
-    for(const [key,min,max] of [['x',0,100],['y',0,100],['scale',5,200],['rotation',-180,180],['opacity',0,100]])if(!Number.isFinite(face[key])||face[key]<min||face[key]>max)return false;
-    const image=face.image||wrapPendingSources.get(side)||wrapSources.get(side);if(!image||typeof image!=='string'||image.length>1400000||!/^data:image\/(png|jpeg|webp);base64,/.test(image))return false;total+=image.length;
-    normalized[side]={image,side,pattern:['solid','stripe','gradient','carbon'].includes(face.kind),x:face.x,y:face.y,scale:face.scale,rotation:face.rotation,opacity:face.opacity};
+function clearWrap() {
+  ++wrapSerial;
+  wrapConfig = null;
+  restoreRoofGlass();
+  for (const material of wrapMaterials) {
+    material.uniforms.haWrapTexture.value = null;
+    for (const side of wrapSides) material.uniforms[wrapUniforms(side) + 'Opacity'].value = 0;
   }
-  if(total>2400000)return false;
-  const gl=window.viewer?.renderer?.getContext?.();if(gl?.MAX_TEXTURE_IMAGE_UNITS){const limit=gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);if(limit<8||(gl.MAX_TEXTURE_SIZE&&gl.getParameter(gl.MAX_TEXTURE_SIZE)<2048))return false;const material=window.car?.carPaint_CarPaintMaterial,samplers=material?.fragmentShader?.match(/uniform\s+(?:lowp|mediump|highp)?\s*sampler\w*\s+(\w+)/g)||[],base=samplers.filter(decl=>!/\bhaWrapTexture\b/.test(decl));if(base.length+(samplers.length===base.length?1:0)>limit)return false;}
-  const needsAtlas=wrapSides.some(side=>normalized[side]?normalized[side].image!==wrapSources.get(side):wrapImages.has(side));
-  const original=window.car?.carPaint_CarPaintMaterial?.uniforms?.mainTexture?.value;if(full&&needsAtlas&&!original?.clone)return false;
-  const serial=++wrapSerial;for(const side of wrapSides){if(normalized[side])wrapPendingSources.set(side,normalized[side].image);else wrapPendingSources.delete(side);}
-  const next={version:2,faces:normalized};
-  if(!full){wrapConfig=next;return true;}
-  const decoded=await Promise.all(wrapSides.filter(side=>normalized[side]&&normalized[side].image!==wrapSources.get(side)).map(async side=>{const image=await new Promise(resolve=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>resolve(null);im.src=normalized[side].image});return [side,image]}));
-  if(serial!==wrapSerial)return true;if(decoded.some(([,image])=>!image||image.width>1024||image.height>1024))return false;
-  const nextImages=new Map(wrapImages);for(const side of wrapSides){if(!normalized[side])nextImages.delete(side);}
-  for(const [side,image] of decoded)nextImages.set(side,image);
-  const rebuild=decoded.length>0||wrapSides.some(side=>!normalized[side]&&wrapImages.has(side));let nextTexture=wrapTexture,nextRects=new Map(wrapAtlasRects);
-  if(rebuild&&nextImages.size){const canvas=document.createElement('canvas');canvas.width=2048;canvas.height=2048;const ctx=canvas.getContext('2d');if(!ctx)return false;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingQuality='high';nextRects=new Map();
-    wrapSides.forEach((side,index)=>{const image=nextImages.get(side);if(!image)return;const col=index%4,row=Math.floor(index/4),cellX=col*512,cellY=row*1024,scale=Math.min(508/image.width,1020/image.height),w=image.width*scale,h=image.height*scale,x=cellX+(512-w)/2,y=cellY+(1024-h)/2;ctx.drawImage(image,x,y,w,h);nextRects.set(side,[(x+.5)/2048,(2048-y-h+.5)/2048,Math.max(0,w-1)/2048,Math.max(0,h-1)/2048]);});
-    try{nextTexture=original.clone();if(original.source?.constructor)nextTexture.source=new original.source.constructor(canvas);else nextTexture.image=canvas;nextTexture.flipY=true;nextTexture.generateMipmaps=false;nextTexture.minFilter=original.magFilter??original.minFilter;nextTexture.needsUpdate=true;}catch{nextTexture?.dispose?.();return false;}
+  wrapTexture?.dispose();
+  wrapTexture = null;
+  wrapAtlasRects.clear();
+  wrapImages.clear();
+  atlasLayers.clear();
+  redraw();
+  return true;
+}
+
+function normalizeWrap(value) {
+  const faces = value.version === 3 || value.version === 2 ? value.faces
+    : value.image ? { [wrapSides.includes(value.side) ? value.side : 'left']: value } : null;
+  if (!faces || typeof faces !== 'object') return null;
+  const result = {};
+  for (const side of wrapSides) {
+    if (!faces[side]) continue;
+    const layers = Array.isArray(faces[side]) ? faces[side] : [faces[side]];
+    if (layers.length > 4) return null;
+    result[side] = [];
+    for (const layer of layers) {
+      if (!layer || (layer.side && layer.side !== side)) return null;
+      for (const [key,min,max] of [['x',-100,200],['y',-100,200],['scale',5,200],['rotation',-180,180],['opacity',0,100]]) {
+        if (!Number.isFinite(layer[key]) || layer[key] < min || layer[key] > max) return null;
+      }
+      const image = layer.image ?? wrapConfig?.faces[side]?.[result[side].length]?.image;
+      if (typeof image !== 'string' || image.length > 1400000 || !/^data:image\/(png|jpeg|webp);base64,/.test(image)) return null;
+      result[side].push({ image, kind: layer.kind, x: layer.x, y: layer.y, scale: layer.scale, rotation: layer.rotation, opacity: layer.opacity });
+    }
   }
-  if(serial!==wrapSerial){if(nextTexture!==wrapTexture)nextTexture?.dispose();return true;}
-  if(rebuild){wrapTexture?.dispose();wrapTexture=nextImages.size?nextTexture:null;if(!nextImages.size)wrapTexture?.dispose();wrapAtlasRects=nextRects;wrapImages.clear();for(const entry of nextImages)wrapImages.set(...entry);wrapSources.clear();for(const side of wrapSides)if(normalized[side]){wrapSources.set(side,normalized[side].image);if(wrapPendingSources.get(side)===normalized[side].image)wrapPendingSources.delete(side);}else wrapPendingSources.delete(side);}
-  wrapConfig=next;return updateWrap();
+  return { version: 3, faces: result };
+}
+
+function decodeWrapImage(source) {
+  if (!wrapImages.has(source)) {
+    wrapImages.set(source, new Promise(resolve => {
+      const image = new Image();
+      image.onload = () => resolve(image.width <= 1024 && image.height <= 1024 ? image : null);
+      image.onerror = () => resolve(null);
+      image.src = source;
+    }));
+  }
+  return wrapImages.get(source);
+}
+
+function layerGeometry(side, layer, image, span, height) {
+  const angle = layer.rotation * Math.PI / 180;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  let width = span * layer.scale / 100;
+  if (side === 'top' && layer.kind !== 'image' && layer.kind && layer.scale > 100) {
+    const across = span * Math.abs(cos) + height * Math.abs(sin);
+    const along = span * Math.abs(sin) + height * Math.abs(cos);
+    const cover = Math.max(across, along * image.width / image.height);
+    width += Math.max(0, cover * 1.01 - span * 1.8) * (layer.scale - 100) / 80;
+  }
+  return { angle, width, height: width * image.height / image.width };
+}
+
+function sameTile(previous, layers) {
+  if (!previous || layers.length !== previous.length) return false;
+  return layers.every((layer, index) => {
+    const before = previous[index];
+    return layer.image === before.image && (layers.length === 1 ||
+      ['x','y','scale','rotation','opacity','kind'].every(key => layer[key] === before[key]));
+  });
+}
+
+// Each face uses one atlas tile. Composite additional slots in vehicle coordinates so the
+// physical scale, rotation and image aspect ratio match the single-slot shader.
+function drawWrapTile(canvas, side, layers, images, span, height) {
+  const index = wrapSides.indexOf(side);
+  const cellWidth = 1024, cellHeight = 682;
+  const left = (index % 2) * cellWidth, top = Math.floor(index / 2) * cellHeight;
+  const first = images.get(layers[0].image);
+  const iw = layers.length === 1 ? first.width : span, ih = layers.length === 1 ? first.height : height;
+  const zoom = Math.min((cellWidth - 4) / iw, (cellHeight - 4) / ih);
+  const w = iw * zoom, h = ih * zoom, x = left + (cellWidth - w) / 2, y = top + (cellHeight - h) / 2;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(left, top, cellWidth, cellHeight);
+  ctx.imageSmoothingQuality = 'high';
+  if (layers.length === 1) {
+    ctx.drawImage(first, x, y, w, h);
+  } else {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.translate(x, y);
+    ctx.scale(w / span, h / height);
+    for (const layer of layers) {
+      const image = images.get(layer.image);
+      const size = layerGeometry(side, layer, image, span, height);
+      ctx.save();
+      ctx.translate(layer.x * span / 100, (1 - layer.y / 100) * height);
+      ctx.rotate(-size.angle);
+      ctx.globalAlpha = layer.opacity / 100;
+      ctx.drawImage(image, -size.width / 2, -size.height / 2, size.width, size.height);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+  return [(x + .5) / canvas.width, (canvas.height - y - h + .5) / canvas.height,
+    (w - 1) / canvas.width, (h - 1) / canvas.height];
+}
+
+async function setWrap(value) {
+  if (!value) return clearWrap();
+  const config = normalizeWrap(value);
+  if (!config) return false;
+  const sources = new Set(Object.values(config.faces).flat().map(layer => layer.image));
+  if (!sources.size) return clearWrap();
+  wrapConfig = config;
+  const serial = ++wrapSerial;
+  if (!full) return true;
+  const box = carBounds();
+  const original = window.car?.carPaint_CarPaintMaterial?.uniforms?.mainTexture?.value;
+  if (!box || !original?.clone) return false;
+  const gl = window.viewer?.renderer?.getContext?.();
+  if (gl && (gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) < 8 || gl.getParameter(gl.MAX_TEXTURE_SIZE) < 2048)) return false;
+  const paint = window.car.carPaint_CarPaintMaterial;
+  const samplers = paint.fragmentShader?.match(/uniform\s+(?:lowp|mediump|highp)?\s*sampler\w*\s+(\w+)/g) || [];
+  if (gl && samplers.filter(decl => !/\bhaWrapTexture\b/.test(decl)).length + 1 > gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS)) return false;
+  for (const source of wrapImages.keys()) if (!sources.has(source)) wrapImages.delete(source);
+  const images = new Map(await Promise.all([...sources].map(async source => [source, await decodeWrapImage(source)])));
+  if (serial !== wrapSerial) return true;
+  for (const [source, image] of images) if (!image) { wrapImages.delete(source); return false; }
+
+  const centerBase = box.min.clone().add(box.max).multiplyScalar(.5);
+  const bounds = box.getSize(box.min.clone());
+  const extent = axis => Math.abs(axis.x) * bounds.x + Math.abs(axis.y) * bounds.y + Math.abs(axis.z) * bounds.z;
+  if (!wrapTexture) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 2048;
+    wrapTexture = original.clone();
+    if (original.source?.constructor) wrapTexture.source = new original.source.constructor(canvas);
+    else wrapTexture.image = canvas;
+    wrapTexture.flipY = true;
+    wrapTexture.generateMipmaps = false;
+    wrapTexture.minFilter = original.magFilter ?? original.minFilter;
+  }
+  const values = {};
+  for (const side of wrapSides) {
+    const layers = config.faces[side];
+    if (!layers?.length) { atlasLayers.delete(side); wrapAtlasRects.delete(side); continue; }
+    const frame = wrapFrame(side, box);
+    if (!frame) continue;
+    const span = extent(frame.u), height = extent(frame.v);
+    if (span <= 0 || height <= 0) continue;
+    if (!sameTile(atlasLayers.get(side), layers)) {
+      wrapAtlasRects.set(side, drawWrapTile(wrapTexture.image, side, layers, images, span, height));
+      atlasLayers.set(side, layers);
+      wrapTexture.needsUpdate = true;
+    }
+    if (layers.length === 1) {
+      const layer = layers[0], size = layerGeometry(side, layer, images.get(layer.image), span, height);
+      const center = centerBase.clone().addScaledVector(frame.u, (layer.x / 100 - .5) * span).addScaledVector(frame.v, (layer.y / 100 - .5) * height);
+      values[side] = { center, frame, size: [size.width, size.height], rotation: [Math.cos(size.angle), Math.sin(size.angle)], opacity: layer.opacity / 100 };
+    } else {
+      values[side] = { center: centerBase, frame, size: [span, height], rotation: [1, 0], opacity: 1 };
+    }
+  }
+  return updateWrap(values, centerBase, box);
 }
 let tireView=false,savedView=null,motionSpeed=-1,inView=true,tireFrame=0,tireTransition=false;
 let tireLayoutKey='',tireLabels=null,tireOpacity=0,tireResizeFrame=0;
@@ -614,10 +738,10 @@ async function applyAppearance(current, force=false){
   if(current!==appearance||released&&!canDraw())return;
   if(force||!was||was.paint!==paint)setPaint(paint);
   if(force||!was||was.quality!==quality){applyQuality();redraw()}
-  if(!current||force||was?.wrap!==current.wrap||wrapPendingSources.size){
+  if(!current||force||was?.wrap!==current.wrap||wrapApplying){
     const value=current?JSON.parse(current.wrap):wrapConfig;
     // Skip clearing an already unwrapped model. This otherwise submits an extra draw.
-    if(value||wrapTexture||wrapPendingSources.size){try{await setWrap(value)}catch{}}
+    if(value||wrapTexture||wrapConfig){wrapApplying++;try{await setWrap(value)}catch{}finally{wrapApplying--}}
   }
   if(current===appearance)appliedAppearance=current;
 }

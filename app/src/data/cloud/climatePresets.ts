@@ -7,3 +7,7 @@ export const climatePresets = [
 
 export type PreparationClimate = typeof climatePresets[number][2]['mode'];
 export const findClimatePreset = (mode?: PreparationClimate) => climatePresets.find(p => p[2].mode === mode);
+
+export function quickClimatePreset(action: string) {
+  return climatePresets.find(([, , settings]) => action === 'climate-' + settings.mode);
+}

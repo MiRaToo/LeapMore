@@ -27,7 +27,8 @@ final class DirectQuickControl {
     private static final Set<String> vehiclesInFlight = new HashSet<>();
     private final Context context;
     private final VehicleTile.Action action;
-    private final String targetId, vehicleKey;
+    private final String targetId, vehicleKey, approval;
+    private String enteredPin;
     private final Consumer<String> notify;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final long deadline = SystemClock.elapsedRealtime() + 30000;
@@ -35,20 +36,22 @@ final class DirectQuickControl {
     private WebView runtime;
     private volatile boolean finished;
 
-    private DirectQuickControl(Context context, VehicleTile.Action action, String targetId, String vehicleKey, Consumer<String> notify) {
+    private DirectQuickControl(Context context, VehicleTile.Action action, String targetId, String vehicleKey, String approval, String pin, Consumer<String> notify) {
         this.context = context.getApplicationContext();
         this.action = action;
         this.targetId = targetId;
         this.vehicleKey = vehicleKey;
+        this.approval = approval;
+        this.enteredPin = pin;
         this.notify = notify;
     }
 
-    static void run(Context context, VehicleTile.Action action, String id, Consumer<String> notify) {
+    static void run(Context context, VehicleTile.Action action, String id, String approval, String pin, Consumer<String> notify) {
         try {
             JSONArray key = new JSONArray(id);
             String vehicle = new JSONArray().put(key.getString(0)).put(key.getString(2)).toString();
             if (!vehiclesInFlight.add(vehicle)) { notify.accept("该车正在执行操作"); return; }
-            new DirectQuickControl(context, action, id, vehicle, notify).start();
+            new DirectQuickControl(context, action, id, vehicle, approval, pin, notify).start();
         } catch (Exception ignored) { notify.accept("绑定的车辆无效"); }
     }
 
@@ -76,7 +79,7 @@ final class DirectQuickControl {
             runtime.setWebViewClient(new WebViewClient() {
                 @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return true; }
                 @Override public void onPageFinished(WebView view, String url) {
-                    if (!finished) view.evaluateJavascript(script + "\n;LeapDirect.run(" + JSONObject.quote(action.key) + "," + JSONObject.quote(targetId) + ");", null);
+                    if (!finished) view.evaluateJavascript(script + "\n;LeapDirect.run(" + JSONObject.quote(action.key) + "," + JSONObject.quote(targetId) + "," + JSONObject.quote(approval) + ");", null);
                 }
             });
             main.postDelayed(timeout, 30000);
@@ -93,6 +96,7 @@ final class DirectQuickControl {
     }
 
     public final class Host {
+        @JavascriptInterface public String enteredPin() { return current() == null ? "" : enteredPin; }
         @JavascriptInterface public String input() { JSONObject entry = current(); return entry == null ? "" : entry.toString(); }
         @JavascriptInterface public String vault(String key) {
             if (current() == null || !("leapmotor-session".equals(key) || key.matches("remote-control:(mode|pin):[0-9a-f]{64}"))) return null;
@@ -148,6 +152,7 @@ final class DirectQuickControl {
             } catch (Exception ignored) { message = "无法保存模拟车况"; }
         }
         finished = true;
+        enteredPin = "";
         main.removeCallbacks(timeout);
         vehiclesInFlight.remove(vehicleKey);
         if (runtime != null) { runtime.removeJavascriptInterface("QuickHost"); runtime.destroy(); }

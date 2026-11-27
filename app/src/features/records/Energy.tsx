@@ -117,7 +117,7 @@ export function EnergyPage({ active }: { active: boolean }) {
     enabled: active && useCloud, retry: false, staleTime: 5 * 60_000 });
   const history = useQuery({ queryKey: ['ha', 'energy', m.ha.config?.url, m.ha.vin, 31],
     queryFn: ({ signal }) => haEnergy(m.ha.config!, m.ha.vin, 31, signal),
-    enabled: active && mileage && (m.mode === 'ha' || m.source === 'hybrid') && m.ha.connected && !!m.ha.vin,
+    enabled: active && mileage && m.usesHA && m.ha.connected && !!m.ha.vin,
     retry: false, staleTime: 120_000, refetchInterval: query => query.state.data?.pending ? 60_000 : false });
   const facts = useQuery({
     queryKey: ['cloud', 'energy-facts', m.cloudKey, m.current.powertrain],
@@ -147,7 +147,7 @@ export function EnergyPage({ active }: { active: boolean }) {
     }
     return { byDay, energy };
   }, [m.records.trips]);
-  const haDays = new Map(m.usesHA ? history.data?.daily.map(row => [row.day, row]) : []);
+  const haDays = new Map(mileage && m.ha.vin ? history.data?.daily.map(row => [row.day, row]) : []);
   const officialMonth = new Map(summary.data?.daily.map(row => [row.day, row.km]));
   const cloudDays = new Map(useCloud ? cloud.data?.map(row => [row.day, row]) : []);
   // 以完整月份填充仪表卡。切换趋势图的周/月只改变图表窗口。

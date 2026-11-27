@@ -33,6 +33,7 @@ private final class CloudTripSampler {
 @available(iOS 26.0, *)
 final class TripRecorder {
     static let shared = TripRecorder()
+    private let activityTitle = "LeapMore 正在记录行程和充电"
     private let identifier = (Bundle.main.bundleIdentifier ?? "com.leapmore.app") + ".trip.manual"
     private let queue = DispatchQueue(label: "com.leapmore.trip.samples", qos: .utility)
     private var registered = false
@@ -112,7 +113,8 @@ final class TripRecorder {
         let db = try database()
         let previous = try state(car)
         let next = TripRecordingState(vehicle: car, phase: "starting", lastSample: previous.lastSample, sampledAt: previous.sampledAt)
-        let request = BGContinuedProcessingTaskRequest(identifier: identifier, title: "车辆记录 · " + car.name, subtitle: "等待首次采样")
+        let request = BGContinuedProcessingTaskRequest(identifier: identifier, title: activityTitle,
+                                                      subtitle: "\(car.name) · 等待首次采样")
         request.strategy = .fail
         try db.save(next)
         do { try BGTaskScheduler.shared.submit(request) }
@@ -154,7 +156,7 @@ final class TripRecorder {
                         state.count += 1
                         try self.database().save(state, frame: frame)
                         self.task?.progress.completedUnitCount = Int64(state.count)
-                        self.task?.updateTitle("车辆记录 · " + car.name, subtitle: "已保存 " + String(state.count) + " 次采样")
+                        self.task?.updateTitle(self.activityTitle, subtitle: "\(car.name) · 已保存 \(state.count) 次采样")
                     }
                     if var report = reply["report"] as? [String: Any], report["vehicleId"] as? String == car.id {
                         if self.allowed[car.key] != true {

@@ -13,6 +13,7 @@ function drawableRuns(points: (Point | undefined)[]) {
   let run: Point[] = [];
   for (const point of points) {
     if (!point || point.coordinate === 'unknown') { run = []; continue; }
+    if (point.gapBefore) run = [];
     const previous = run.at(-1);
     if (!previous) runs.push(run);
     if (previous?.lat !== point.lat || previous.lon !== point.lon) run.push(point);
@@ -24,7 +25,7 @@ function drawableRuns(points: (Point | undefined)[]) {
 }
 
 export function TripThumbnail({ trips, mapStyle, daily = false }: { trips: Trip[]; mapStyle: MapStyle; daily?: boolean }) {
-  const { ha, canSee } = useModelContext();
+  const { ha, canSee, usesHA } = useModelContext();
   const permitted = canSee('location');
   const element = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
@@ -44,8 +45,9 @@ export function TripThumbnail({ trips, mapStyle, daily = false }: { trips: Trip[
   const previews = useQueries({ queries: remote.map(trip => {
     const id = trip.id.slice(8);
     return {
-      queryKey: ['ha', 'trip-preview', config?.url, vin, id],
-      queryFn: ({ signal }: { signal: AbortSignal }) => haTripTrack(config!, vin, id, signal, 120),
+      queryKey: ['ha', 'trip-preview', config?.localScope, config?.url, vin, id, usesHA],
+      queryFn: ({ signal }: { signal: AbortSignal }) => haTripTrack(config!, vin, id, signal, 120, usesHA ? 'refresh' : 'saved-only'),
+      networkMode: 'offlineFirst' as const,
       enabled: connected, staleTime: 30 * 60_000, gcTime: 30 * 60_000, retry: false,
     };
   }) });

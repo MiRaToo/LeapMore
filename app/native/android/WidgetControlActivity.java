@@ -15,6 +15,12 @@ public class WidgetControlActivity extends BridgeActivity {
     private static final List<String> COMMANDS = Arrays.asList("lock", "climate", "trunk", "find");
 
     @Override
+    public void finishAndRemoveTask() {
+        super.finishAndRemoveTask();
+        if (android.os.Build.VERSION.SDK_INT < 34) overridePendingTransition(0, 0);
+    }
+
+    @Override
     public void setTheme(int theme) {
         // BridgeActivity applies its own theme while creating the WebView.
         super.setTheme(R.style.Leap_WidgetControl);
@@ -41,6 +47,10 @@ public class WidgetControlActivity extends BridgeActivity {
             registerPlugin(LeapWidgetPlugin.class);
         }
         super.onCreate(state);
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0);
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0);
+        } else overridePendingTransition(0, 0);
         if (!valid) { finish(); return; }
         getWindow().setBackgroundDrawableResource(android.R.color.transparent);
         getWindow().getDecorView().setBackgroundColor(Color.TRANSPARENT);

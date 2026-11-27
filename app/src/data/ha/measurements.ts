@@ -4,13 +4,17 @@ import type { Field, Mapping, Sample } from './schema.ts';
 import type { Archive } from './archive.ts';
 import { estimateSocEnergy, socPercent } from '../vehicleEnergy.ts';
 
-export type Point = { at: number; lat: number; lon: number; coordinate: 'gcj02' | 'wgs84' | 'unknown' };
+export type Point = { at: number; lat: number; lon: number; coordinate: 'gcj02' | 'wgs84' | 'unknown'; gapBefore?: boolean };
 export type MetricSample = { at: number; value: number | null; soc?: number | null };
 export type TrackSample = MetricSample & { position?: Point; distanceKm?: number };
-export type Reading = Partial<Record<Field, number | string | null>> & { position?: Point | null };
-export type Frame = { at: number; data: Reading; changed: Field[]; tripBoundary?: 'interrupted' | 'ended'; chargeOnly?: true };
-export type Trip = TripSummary & { route: Point[]; speeds: { at: number; value: number }[]; gap: boolean; group?: 'archive'; socStart?: number | null; socEnd?: number | null };
-export type Charge = ChargeSession & { position?: Point; powers: { at: number; value: number }[]; powerTimeline?: MetricSample[]; group?: 'archive'; active?: boolean;
+export type Reading = Partial<Record<Field, number | string | null>> & { position?: Point | null; rangeBasis?: string };
+export type Frame = { at: number; data: Reading; changed: Field[]; tripBoundary?: 'interrupted' | 'ended' | 'parked'; chargeBoundary?: true; chargeOnly?: true; pollIntervalMs?: number };
+export type Trip = TripSummary & { route: Point[]; speeds: { at: number; value: number }[]; gap: boolean; group?: 'archive';
+  socStart?: number | null; socEnd?: number | null; socSamples?: MetricSample[]; batteryTemperatures?: MetricSample[];
+  rangeStartKm?: number | null; rangeEndKm?: number | null; rangeComparable?: boolean; reconstructed?: boolean;
+  startOdometerKm?: number | null; endOdometerKm?: number | null; lastSampleAt?: number; formerIds?: string[];
+  mileageRemainder?: boolean };
+export type Charge = ChargeSession & { position?: Point; powers: { at: number; value: number }[]; powerTimeline?: MetricSample[]; socSamples?: MetricSample[]; batteryTemperatures?: MetricSample[]; group?: 'archive'; active?: boolean;
   energyBasis?: 'official' | 'soc'; sampledId?: string; minRecordedBatteryTempC?: number };
 
 const missing = new Set(['', 'unavailable', 'unknown', 'none', 'null', 'nan', '—']);
@@ -141,6 +145,21 @@ export function framesOf(entries: Sample[], mapping: Mapping): Frame[] {
   return frames;
 }
 
+export function batteryTemperatureSamples(frames: Frame[], start: number, end: number): MetricSample[] {
+  return frames.filter(frame => frame.at >= start && frame.at <= end && frame.changed.includes('batteryMinTemp'))
+    .map(frame => ({ at: frame.at, value: numberOf(frame.data.batteryMinTemp) }));
+}
+
+export function mergeTemperatureSamples(start: number, end: number, ...series: (MetricSample[] | undefined)[]) {
+  const byTime = new Map<number, MetricSample>();
+  for (const samples of series) {
+    for (const sample of samples ?? []) {
+      if (sample.at >= start && sample.at <= end && (sample.value !== null || !byTime.has(sample.at))) byTime.set(sample.at, sample);
+    }
+  }
+  return [...byTime.values()].sort((a, b) => a.at - b.at);
+}
+
 export function lowestBatteryTemperature(frames: Frame[], start: number, end: number) {
   let lowest: number | null = null;
   for (const frame of frames) {
@@ -162,7 +181,109 @@ function activeValue(frame: Frame, kind: 'trip' | 'charge') {
   return state === 'unknown' ? null : state === 'charging';
 }
 
-interface Segment { frames: Frame[]; start: number; end: number | null; partial: boolean }
+interface Segment { frames: Frame[]; start: number; end: number | null; partial: boolean; reconstructed?: boolean; formerIds?: string[] }
+
+export const cloudSampleGap = 90_000;
+export const cloudFrozenTime = 30 * 60_000;
+export const parkingConfirmation = (frame: Frame) => Math.max(60_000, 3 * (frame.pollIntervalMs ?? 6000));
+const maxOdometerJump = 1500;
+const pluggedIn = (frame: Frame) => ['charging', 'plugged', 'done'].includes(String(frame.data.charge));
+
+// Replay the LeapToHA trip lifecycle from this vehicle's stored reports. Sample gaps
+// break a trace, whereas confirmed parking, plugging in and the frozen watchdog end a trip.
+function splitCloudTrips(frames: Frame[], now?: number): Segment[] {
+  const trips: Segment[] = [];
+  let active: Segment | undefined;
+  let previous: Frame | undefined;
+  let baseline: Frame | undefined;
+  let lastMovingAt = 0;
+  let parkedSince: number | undefined;
+  let meter: number | null = null;
+  let outliers = 0;
+
+  function finish(interrupted: boolean) {
+    if (active) {
+      active.end = lastMovingAt;
+      active.partial ||= interrupted;
+      trips.push(active);
+    }
+    active = undefined;
+    parkedSince = undefined;
+  }
+
+  for (let frame of frames) {
+    if (frame.tripBoundary) {
+      finish(frame.tripBoundary === 'interrupted');
+      if (frame.tripBoundary === 'parked') {
+        if (pluggedIn(frame)) baseline = undefined;
+        continue;
+      }
+      previous = baseline = undefined;
+      meter = null;
+      outliers = 0;
+      continue;
+    }
+    // Empty markers in older databases carry no vehicle observation.
+    if (frame.chargeOnly || !frame.changed.length || previous && frame.at <= previous.at) continue;
+    if (previous && frame.at - previous.at > cloudFrozenTime) finish(true);
+    const rawMeter = numberOf(frame.data.odometer);
+    if (rawMeter !== null && rawMeter >= 0) {
+      if (meter !== null && Math.abs(rawMeter - meter) > maxOdometerJump) {
+        if (++outliers < 3) frame = { ...frame, data: { ...frame.data, odometer: null } };
+        else {
+          finish(true);
+          baseline = undefined;
+          meter = rawMeter;
+          outliers = 0;
+        }
+      } else { meter = rawMeter; outliers = 0; }
+    }
+    const km = numberOf(frame.data.odometer);
+    const driving = drivingOf(frame.data) === true;
+    const plugged = !driving && pluggedIn(frame);
+    if (active && parkedSince !== undefined && previous && frame.at - parkedSince >= parkingConfirmation(previous) && driving) finish(false);
+
+    if (!active) {
+      const delta = baseline && diff(baseline.data.odometer, km);
+      if (baseline && delta != null && delta >= 1 && delta <= maxOdometerJump && !pluggedIn(baseline) && !plugged) {
+        const before = socPercent(baseline.data.soc), after = socPercent(frame.data.soc);
+        if (before === null || after === null || after <= before + .5) {
+          trips.push({ frames: [baseline, frame], start: baseline.at, end: frame.at, partial: true, reconstructed: true });
+        }
+      }
+      if (driving) {
+        // LeapToHA uses the last trusted meter if the first driving frame lacks it.
+        if (km === null && baseline && meter !== null) frame = { ...frame, data: { ...frame.data, odometer: meter } };
+        active = { frames: [], start: frame.at, end: null, partial: !previous || drivingOf(previous.data) !== false };
+      }
+    }
+
+    if (active) {
+      if (driving && active.frames.length && previous && (frame.at - previous.at > cloudSampleGap || drivingOf(previous.data) !== true)) {
+        (active.formerIds ??= []).push('live-' + frame.at);
+      }
+      active.partial ||= !!previous && frame.at - previous.at > cloudSampleGap;
+      active.frames.push(frame);
+      if (driving) {
+        lastMovingAt = frame.at;
+        parkedSince = undefined;
+      } else {
+        parkedSince ??= frame.at;
+        if (plugged || frame.at - parkedSince >= parkingConfirmation(frame)) finish(false);
+      }
+    }
+    if (km !== null && km >= 0) baseline = frame;
+    else if (plugged) baseline = undefined;
+    previous = frame;
+  }
+  if (active && now !== undefined && previous) {
+    if (parkedSince !== undefined && now - parkedSince >= parkingConfirmation(previous)) finish(false);
+    else if (now - previous.at > cloudFrozenTime) finish(true);
+  }
+  if (active) trips.push({ ...active, partial: true });
+  return trips;
+}
+
 function split(frames: Frame[], kind: 'trip' | 'charge') {
   const result: Segment[] = [];
   let active: Segment | null = null;
@@ -209,28 +330,57 @@ export function kmBetween(a: Pick<Point, 'lat' | 'lon'>, b: Pick<Point, 'lat' | 
   return 12742 * Math.asin(Math.min(1, Math.sqrt(d)));
 }
 
+function cloudOdometerDistance(frames: Frame[]) {
+  let first: number | null = null, last: number | null = null;
+  let count = 0;
+  for (const frame of frames) {
+    const km = numberOf(frame.data.odometer);
+    if (km === null || km < 0) continue;
+    if (last !== null && km < last) return null;
+    first ??= km;
+    last = km;
+    count++;
+  }
+  return count >= 2 ? diff(first, last) : null;
+}
+
 function tripFrom(segment: Segment, id: string, source: 'ha' | 'phone' | 'live', capacityKwh: number | null = null): Trip {
   const { frames, start, end, partial } = segment;
   const first = frames[0]?.data ?? {};
-  const last = (source === 'live' && end === null ? frames.filter(f => drivingOf(f.data) === true).at(-1) : frames.at(-1))?.data ?? {};
-  const route = frames.flatMap(f => f.changed.some(key => ['tracker', 'latitude', 'longitude'].includes(key)) && f.data.position ? [f.data.position] : []);
-  const speeds = samples(frames, 'speed');
+  const last = frames.at(-1)?.data ?? {};
+  const trace = source === 'live' && end !== null ? frames.filter(f => f.at <= end) : frames;
+  const points = segment.reconstructed ? [] : trace.flatMap(f => f.changed.some(key => ['tracker', 'latitude', 'longitude'].includes(key)) && f.data.position ? [f.data.position] : []);
+  const route = source === 'live' ? points.map((p, i) => i > 0 && p.at - points[i - 1].at > cloudSampleGap ? { ...p, gapBefore: true } : p) : points;
+  const speeds = segment.reconstructed ? [] : samples(trace, 'speed');
   const usableRoute = route.length > 1 && route.every((p, index) =>
-    p.coordinate === route[0].coordinate && (index === 0 || p.at - route[index - 1].at < 180_000));
-  const distanceKm = (frames.length > 1 ? diff(first.odometer, last.odometer) : null) ??
-    (usableRoute ? route.slice(1).reduce((km, p, i) => km + kmBetween(route[i], p), 0) : null);
-  const durationMin = end !== null ? Math.round((end - start) / 60_000) : null;
+    !p.gapBefore && p.coordinate === route[0].coordinate && (index === 0 || p.at - route[index - 1].at < 180_000));
+  const odometer = source === 'live' ? cloudOdometerDistance(frames) ??
+    (frames.length === 1 && end === start ? diff(first.odometer, last.odometer) : null) :
+    frames.length > 1 ? diff(first.odometer, last.odometer) : null;
+  const fullOdometer = odometer !== null && diff(first.odometer, last.odometer) === odometer;
+  const gpsKm = usableRoute ? route.slice(1).reduce((km, p, i) => km + kmBetween(route[i], p), 0) : null;
+  const integerCrossing = source === 'live' && gpsKm !== null && gpsKm > 0 && odometer !== null &&
+    (odometer < 1 || odometer === 1 && gpsKm < .5);
+  const distanceKm = integerCrossing ? gpsKm : fullOdometer ? odometer : gpsKm ?? odometer;
+  const avg = distanceKm !== null && end !== null && end > start ? distanceKm * 3_600_000 / (end - start) : null;
+  const usableTime = !segment.reconstructed || avg !== null && avg >= 8 && avg <= 160;
+  const durationMin = end !== null && usableTime ? (source === 'live' ? (end - start) / 60_000 : Math.round((end - start) / 60_000)) : null;
   const socStart = socPercent(first.soc);
   const socEnd = socPercent(last.soc) ?? (source === 'live' ?
     frames.slice(1).reduceRight<number | null>((latest, frame) => latest ?? socPercent(frame.data.soc), null) : null);
   const energyKwh = source === 'live' ? estimateSocEnergy(socEnd, socStart, capacityKwh) : diff(first.used, last.used);
+  const socSamples = trace.filter(frame => frame.changed.includes('soc')).map(frame => ({ at: frame.at, value: socPercent(frame.data.soc) }));
   return {
     id, startedAt: start, endedAt: end, source, distanceKm, durationMin, energyKwh,
     efficiency: distanceKm && (source !== 'live' || distanceKm >= 0.5) && energyKwh !== null ? 100 * energyKwh / distanceKm : null,
-    avgSpeedKmh: distanceKm !== null && end && end > start ? distanceKm * 3_600_000 / (end - start) : null,
-    pointCount: route.length || null, route, speeds, complete: !partial && distanceKm !== null,
+    avgSpeedKmh: usableTime ? avg : null, ...(segment.reconstructed && { reconstructed: true }),
+    ...(source === 'live' && { startOdometerKm: numberOf(first.odometer), endOdometerKm: numberOf(last.odometer), lastSampleAt: frames.at(-1)?.at }),
+    ...(segment.formerIds && { formerIds: segment.formerIds }),
+    pointCount: route.length || null, route, speeds, complete: !partial && (fullOdometer || usableRoute),
     gap: partial || !route.length || !usableRoute,
-    ...(source === 'live' ? { socStart, socEnd } : {}),
+    socStart, socEnd, socSamples, batteryTemperatures: batteryTemperatureSamples(frames, start, end ?? Infinity),
+    rangeStartKm: numberOf(first.range), rangeEndKm: numberOf(last.range),
+    rangeComparable: first.rangeBasis === last.rangeBasis,
   };
 }
 
@@ -253,11 +403,15 @@ function chargeFrom(segment: Segment, id: string, source: 'ha' | 'phone' = 'ha')
   }
   return {
     id, startedAt: segment.start, endedAt: segment.end, source, type: types.size === 2 ? 'mixed' : [...types][0] ?? 'unknown',
+    socSamples: segment.frames.filter(frame => frame.changed.includes('soc')).map(frame => ({ at: frame.at, value: socPercent(frame.data.soc) })),
+    batteryTemperatures: batteryTemperatureSamples(segment.frames, segment.start, segment.end ?? Infinity),
     kwh, gridKwh: null, cost: null, socStart: numberOf(first.soc), socEnd: numberOf(last.soc), partial: segment.partial || kwh === null, powers,
   };
 }
-export function deriveTrips(frames: Frame[], source: 'ha' | 'phone' | 'live', capacityKwh: number | null = null) {
-  return split(frames, 'trip').map(s => tripFrom(s, source + '-' + s.start, source, capacityKwh)).reverse();
+export function deriveTrips(frames: Frame[], source: 'ha' | 'phone' | 'live', capacityKwh: number | null = null, now?: number) {
+  const segments = source === 'live' ? splitCloudTrips(frames, now) : split(frames, 'trip');
+  const trips = segments.map(s => tripFrom(s, s.reconstructed ? 'live-gap-' + s.start + '-' + s.end : source + '-' + s.start, source, capacityKwh));
+  return (source === 'live' ? trips.filter(t => t.endedAt === null || t.distanceKm === null || t.distanceKm >= .2) : trips).reverse();
 }
 export function deriveHistory(frames: Frame[], source: 'ha' | 'phone' = 'ha') {
   return {
@@ -290,7 +444,9 @@ export function deriveArchive(archive: Archive) {
       position: position(numberOf(s['3'] ?? s.latitude ?? s.legacy_latitude_wgs84),
         numberOf(s['2'] ?? s.longitude ?? s.legacy_longitude_wgs84), at, raw.coordinate_system),
     };
-    frames.set(raw.observation_id, { at, data, changed: ['tracker', 'speed', 'power'] });
+    const changed: Field[] = ['tracker', 'speed', 'power'];
+    if ('1182' in s) { data.batteryMinTemp = numberOf(s['1182']); changed.push('batteryMinTemp'); }
+    frames.set(raw.observation_id, { at, data, changed });
   }
   const fallback = deriveHistory([...frames.values()]);
   const trips: Trip[] = [], charges: Charge[] = [];

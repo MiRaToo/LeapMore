@@ -3,7 +3,8 @@ import type { Charge, MetricSample, Point, TrackSample, Trip } from './measureme
 import type { EnergyDay } from '../types';
 import type { HAConfig } from './schema';
 import { vehicleChargeIndex, vehicleLedger } from './archive';
-import { readDataset, saveDataset } from '../localDatabase';
+import { readDataset, saveDataset, updateDataset } from '../localDatabase';
+import { ledgerKey, savedLedgerKey, trackPrefix } from './cacheKeys';
 import { chargeWindowStart } from '../tariff';
 
 type Row = Record<string, unknown>;
@@ -31,7 +32,9 @@ function asTrip(raw: Row): Trip | null {
   const approximate = !!(raw.reconstructed || raw.frozen || raw.approx_time || raw.gap_seconds);
   return { id: 'ha-trip-' + raw.id, startedAt: start, endedAt: end, source: 'ha', distanceKm, durationMin: energy(raw.duration_min),
     energyKwh: energy(raw.energy_kwh), efficiency: energy(raw.efficiency), avgSpeedKmh: energy(raw.avg_speed_kmh), pointCount,
-    gap: approximate || !pointCount || raw.track_dropped === true, complete: !approximate && end !== null && distanceKm !== null, route: [], speeds: [] };
+    gap: approximate || !pointCount || raw.track_dropped === true, complete: !approximate && end !== null && distanceKm !== null, route: [], speeds: [],
+    socStart: socOf(raw.start_soc), socEnd: socOf(raw.end_soc), reconstructed: raw.reconstructed === true,
+    startOdometerKm: energy(raw.start_odo), endOdometerKm: energy(raw.end_odo) };
 }
 
 function asCharge(raw: Row): Charge | null {
@@ -55,13 +58,31 @@ function ledgerRows<T extends { id: string }>(value: unknown, parse: (row: Row) 
 
 interface Ledger { trips: Trip[]; charges: Charge[]; lastSync: number }
 const legacyLedgerKey = (config: HAConfig, vin: string) => 'ha-ledger:' + JSON.stringify([config.url, vin, config.days]);
-import { ledgerKey } from './cacheKeys';
 export const readLedger = (config: HAConfig, vin: string) => readDataset<Ledger>(ledgerKey(config, vin));
+type SavedRecords = Pick<Ledger, 'trips' | 'charges'>;
+export const readSavedLedger = (config: HAConfig, vin: string) => readDataset<SavedRecords>(savedLedgerKey(config, vin));
+
+// Each response replaces only its verified time window. Older pages and the other
+// record type survive independent or concurrent syncs.
+async function rememberRows<K extends keyof SavedRecords>(config: HAConfig, vin: string, kind: K, rows: SavedRecords[K],
+  signal: AbortSignal, from = Infinity, to = Infinity) {
+  signal.throwIfAborted();
+  await updateDataset<SavedRecords>(savedLedgerKey(config, vin), prior => {
+    const previous = prior ?? { trips: [], charges: [] };
+    if (signal.aborted) return previous;
+    const known = new Map<string, Trip | Charge>();
+    for (const row of previous[kind]) if (row.startedAt < from || row.startedAt > to) known.set(row.id, row);
+    for (const row of rows) known.set(row.id, row);
+    return { ...previous, [kind]: [...known.values()].sort((a, b) => b.startedAt - a.startedAt) };
+  });
+}
 
 export async function haChargeSessions(config: HAConfig, vin: string, days: number, signal: AbortSignal) {
   const reply = await vehicleLedger<{ vin: string; sessions: unknown }>(config, vin, 'charging/history', { days }, signal);
   if (!Array.isArray(reply.sessions)) throw new Error('HA 充电记录暂不可用。');
-  return ledgerRows(reply.sessions, asCharge);
+  const charges = ledgerRows(reply.sessions, asCharge);
+  await rememberRows(config, vin, 'charges', charges, signal, chargeWindowStart(days));
+  return charges;
 }
 
 export async function haOlderChargeSessions(config: HAConfig, vin: string, signal: AbortSignal, from = chargeWindowStart(90)) {
@@ -70,25 +91,29 @@ export async function haOlderChargeSessions(config: HAConfig, vin: string, signa
   const charges = ledgerRows(result.rows, raw => asCharge({ id: raw.record_id, started_at: Number(raw.started_at_ms) / 1000,
     ended_at: Number(raw.ended_at_ms) / 1000, charge_type: raw.charge_type, partial: raw.phase !== 'completed',
     kwh: raw.energy && typeof raw.energy === 'object' && 'kwh' in raw.energy ? raw.energy.kwh : null }));
-  return { charges: charges.filter(row => row.startedAt >= from && row.startedAt <= to), coverage: result.coverage };
+  const inRange = charges.filter(row => row.startedAt >= from && row.startedAt <= to);
+  await rememberRows(config, vin, 'charges', inRange, signal, result.coverage === 'complete' ? from : Infinity, to);
+  return { charges: inRange, coverage: result.coverage };
 }
 
-export async function haTripHistory(config: HAConfig, vin: string, from: number, signal: AbortSignal) {
+export async function haTripHistory(config: HAConfig, vin: string, from: number, signal: AbortSignal, latestOnly = false) {
   const trips = new Map<string, Trip>();
   let end = Date.now() / 1000;
   for (;;) {
     const days = Math.min(3650, Math.ceil((end * 1000 - from) / 86400_000) + 1);
     const window = !from && !trips.size ? {} : { days, end };
-    const result = await vehicleLedger<{ vin: string; trips: unknown }>(config, vin, 'trips/list', { ...window, limit: 2000 }, signal);
+    const result = await vehicleLedger<{ vin: string; trips: unknown }>(config, vin, 'trips/list', { ...window, limit: latestOnly ? 1 : 2000 }, signal);
     if (!Array.isArray(result.trips)) throw new Error('行程历史暂不可用。');
     const page = ledgerRows(result.trips, asTrip);
     for (const trip of page) if (trip.startedAt >= from) trips.set(trip.id, trip);
     const oldest = Math.min(...page.map(trip => trip.startedAt));
-    if (result.trips.length < 2000 || oldest <= from) break;
+    if (latestOnly || result.trips.length < 2000 || oldest <= from) break;
     if (!Number.isFinite(oldest) || oldest / 1000 > end) throw new Error('无法读取更早的行程。');
     end = (oldest - 1) / 1000;
   }
-  return [...trips.values()];
+  const history = [...trips.values()];
+  await rememberRows(config, vin, 'trips', history, signal, latestOnly ? Infinity : from);
+  return history;
 }
 
 export async function syncLedger(config: HAConfig, vin: string, signal: AbortSignal) {
@@ -105,19 +130,39 @@ export async function syncLedger(config: HAConfig, vin: string, signal: AbortSig
   const activeRow = tripsRead && travel.status === 'fulfilled' && travel.value.active && typeof travel.value.active === 'object'
     ? travel.value.active as Row : null;
   const trip = activeRow && asTrip(activeRow);
-  const activeTrip = trip && { ...trip, startOdometerKm: energy(activeRow?.start_odo) };
+  const activeTrip = trip;
   const charges = charging.status === 'fulfilled' ? charging.value : prior?.charges ?? [];
   const result = { trips, charges, lastSync: tripsRead || chargesRead ? Date.now() : prior?.lastSync ?? 0 };
   signal.throwIfAborted();
+  if (tripsRead) await rememberRows(config, vin, 'trips', trips, signal, trips.length >= 500
+    ? Math.min(...trips.map(row => row.startedAt)) : chargeWindowStart(config.days));
   if (tripsRead || chargesRead) await saveDataset(ledgerKey(config, vin), result);
   return { ...result, tripsRead, chargesRead, activeTrip };
 }
 
-export const ledgerKeys = (config: HAConfig, vin: string) => [7, 30, 90].flatMap(days => [ledgerKey({ ...config, days }, vin), legacyLedgerKey({ ...config, days }, vin)]);
+export const ledgerKeys = (config: HAConfig, vin: string) => [savedLedgerKey(config, vin),
+  ...[7, 30, 90].flatMap(days => [ledgerKey({ ...config, days }, vin), legacyLedgerKey({ ...config, days }, vin)])];
 
-export async function haTripTrack(config: HAConfig, vehicle: string, tripId: string, signal: AbortSignal, maxPoints = 20_000) {
-  const result = await vehicleLedger<{ vin: string; points?: unknown }>(config, vehicle, 'trips/track',
-    { trip_id: tripId, max_points: maxPoints }, signal);
+export async function haTripTrack(config: HAConfig, vehicle: string, tripId: string, signal: AbortSignal, maxPoints = 20_000,
+  policy: 'refresh' | 'saved-first' | 'saved-only' = 'refresh') {
+  const prefix = trackPrefix(config, vehicle) + JSON.stringify(tripId) + ':';
+  const key = prefix + maxPoints;
+  const saved = () => readDataset<TrackSample[]>(key);
+  const alternate = () => readDataset<TrackSample[]>(prefix + (maxPoints === 120 ? 20_000 : 120));
+  if (policy !== 'refresh') {
+    const existing = await saved();
+    if (existing) return existing;
+    if (policy === 'saved-only') return await alternate() ?? [];
+  }
+  let result: { vin: string; points?: unknown };
+  try {
+    result = await vehicleLedger(config, vehicle, 'trips/track', { trip_id: tripId, max_points: maxPoints }, signal);
+  } catch (error) {
+    signal.throwIfAborted();
+    const existing = await saved() ?? await alternate();
+    if (existing) return existing;
+    throw error;
+  }
   const samples: TrackSample[] = [];
   if (Array.isArray(result?.points)) for (const point of result.points) {
     if (!Array.isArray(point)) continue;
@@ -129,6 +174,8 @@ export async function haTripTrack(config: HAConfig, vehicle: string, tripId: str
     const value = energy(speed), pct = socOf(soc);
     if (position || value !== null || pct !== null) samples.push({ at, position, value, soc: pct });
   }
+  signal.throwIfAborted();
+  await saveDataset(key, samples);
   return samples;
 }
 

@@ -30,7 +30,7 @@ interface DesktopState {
 export type WidgetControlRequest = { action: string; vehicle: string };
 type QuickTarget = { id: string; title: string; preset: boolean };
 type QuickCatalog = { targets: QuickTarget[]; tiles: Record<string, QuickTarget> };
-type WidgetLaunch = { action?: string };
+type WidgetLaunch = { action?: string; target?: string };
 export type DemoQuickEffect = { action: string; vehicleId: string; preset?: PreparationPreset };
 const plugin = registerPlugin<{
   update(options: { summary: DesktopState }): Promise<void>;
@@ -39,6 +39,7 @@ const plugin = registerPlugin<{
   takeDemo(): Promise<{effects: string}>;
   publishQuick(options: QuickCatalog): Promise<void>;
   addTile(options: { slot: string }): Promise<{ message: string }>;
+  openShortcuts(): Promise<void>;
   closeControl(): Promise<void>;
 }>('LeapWidget');
 export const widgetBridge = {
@@ -50,6 +51,7 @@ export const widgetBridge = {
     if (['ios', 'android'].includes(Capacitor.getPlatform())) await plugin.publishQuick(catalog).catch(() => {});
   },
   async addTile(slot: string) { return (await plugin.addTile({ slot })).message; },
+  openShortcuts: () => plugin.openShortcuts(),
   async update(state: DesktopState) { if (Capacitor.isPluginAvailable('LeapWidget')) await plugin.update({ summary: state }).catch(() => {}); },
   async take(): Promise<WidgetLaunch> { return ['openharmony', 'ios'].includes(Capacitor.getPlatform()) ? plugin.take() : {}; },
   async clear() { if (Capacitor.isPluginAvailable('LeapWidget')) await plugin.clear().catch(() => {}); },

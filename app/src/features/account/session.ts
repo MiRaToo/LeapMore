@@ -17,26 +17,28 @@ function writeSession(change: () => Promise<void>) {
   return result;
 }
 
-export async function loadCloudSession(force = false) {
+export async function loadCloudSession(force = false, checkIn?: { rejectedToken?: string }) {
   const expected = generation;
   const stored = await secureGet<LiveVehicles>(key);
   if (!stored || generation !== expected) return null;
-  if (!force && stored.car.expiresAt > Date.now() + 60_000) return stored;
+  const refreshAccount = stored.account.token === checkIn?.rejectedToken;
+  const needsAccount = !!checkIn && stored.account.expiresAt <= Date.now() + 60_000;
+  if (!force && !refreshAccount && !needsAccount && stored.car.expiresAt > Date.now() + 60_000) return stored;
   if (!renewal) {
-    const pending = renew(stored, expected).finally(() => { if (renewal === pending) renewal = undefined; });
+    const pending = renew(stored, expected, refreshAccount).finally(() => { if (renewal === pending) renewal = undefined; });
     renewal = pending;
   }
   try { return await renewal; }
   catch (error) {
     if (generation !== expected) return null;
-    if (force || error instanceof CloudSessionExpired) throw error;
+    if (force || refreshAccount || error instanceof CloudSessionExpired) throw error;
     // Keep the vehicle selection available during a transient network failure.
     return stored;
   }
 }
 
-async function renew(stored: LiveVehicles, expected: number) {
-  let account = stored.account.expiresAt > Date.now() + 60_000
+async function renew(stored: LiveVehicles, expected: number, refreshAccount: boolean) {
+  let account = !refreshAccount && stored.account.expiresAt > Date.now() + 60_000
     ? stored.account : await refreshAccountToken(stored.account, stored.deviceId);
   let car;
   try { car = await exchangeCarToken(account, stored.deviceId); }

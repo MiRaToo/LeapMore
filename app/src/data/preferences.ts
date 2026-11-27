@@ -7,7 +7,7 @@ export const defaultTariff: Tariff = {
   dc: { periods: [{ start: '00:00', end: '08:00', price: 1.2 }, { start: '08:00', end: '18:00', price: 1.55 }, { start: '18:00', end: '00:00', price: 1.35 }], efficiency: 92 },
 };
 export type Source = 'phone' | 'ha' | 'hybrid' | 'off';
-export const defaultRecordSource = 'hybrid' satisfies Source;
+export const defaultRecordSource = 'off' satisfies Source;
 export const sourceUsesPhone = (source: Source) => source === 'phone' || source === 'hybrid';
 export const sourceUsesHA = (source: Source) => source === 'ha' || source === 'hybrid';
 export type Grant = 'control' | 'location' | 'mileage';

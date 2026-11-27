@@ -70,8 +70,8 @@ public class LeapRecorderPlugin extends Plugin {
         });
     }
 
-    void status(boolean running, String reason) {
-        notifyListeners("status", new JSObject().put("running", running).put("reason", reason));
+    void status(boolean running, String reason, String scope) {
+        notifyListeners("status", new JSObject().put("running", running).put("reason", reason).put("scope", scope));
     }
 
     @PluginMethod

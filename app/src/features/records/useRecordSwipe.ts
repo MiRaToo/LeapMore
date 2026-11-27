@@ -7,7 +7,7 @@ export function useRecordSwipe(tab: number, select: (tab: number) => void) {
   return {
     onPointerDown(event: PointerEvent<HTMLDivElement>) {
       suppress.current = false;
-      start.current = event.isPrimary && event.button === 0 && !(event.target as Element).closest('button:not(.record-fold-toggle),input,select,dialog') ?
+      start.current = event.isPrimary && event.button === 0 && !(event.target as Element).closest('button:not(.record-fold-toggle),input,select,dialog,.amap-view,.sample-timeline') ?
         { id: event.pointerId, x: event.clientX, y: event.clientY } : null;
     },
     onPointerMove(event: PointerEvent<HTMLDivElement>) {

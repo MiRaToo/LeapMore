@@ -30,8 +30,7 @@ export function AppearancePage({ active, show, setShow, visual, setPaused, model
   const m = useModelContext();
   const qc = useQueryClient();
   useEffect(() => { if (active) setShow('settings'); }, [active, setShow]);
-  const { mode, setMode, background, setBackground, quality, setQuality, wrap, setWraps, market, cloud, paint: shownPaint } = visual;
-  const putWrap = (next: typeof wrap) => setWraps(previous => ({ ...previous, [m.vehicleId]: next }));
+  const { mode, setMode, background, setBackground, quality, setQuality, wrap, setWrap, market, cloud, paint: shownPaint } = visual;
   const [color, setColor] = useState({ h: 258, s: .64, v: 1 });
   const [status, setStatus] = useState('');
   const rendering = modelStatus === 'full';
@@ -92,7 +91,7 @@ export function AppearancePage({ active, show, setShow, visual, setPaused, model
         year={m.vehicle?.year} energy={m.current.powertrain === 'reev' ? '增程' : '纯电'} />}
       {show3DSettings && <>
       <div className="c3d-sec"><div className="c3d-sec-h">背景</div><Seg options={backgrounds} current={background} choose={setBackground} label="背景" /></div>
-      <div className="c3d-sec"><div className="c3d-sec-h">车衣</div><div className="seg"><button onClick={() => putWrap({})} className={!Object.keys(wrap).length ? 'on' : ''}>原厂车漆</button><button onClick={() => setShow('wrap')}>自定义车衣</button></div></div>
+      <div className="c3d-sec"><div className="c3d-sec-h">车衣</div><div className="seg"><button onClick={() => setWrap(() => ({}))} className={!Object.keys(wrap).length ? 'on' : ''}>原厂车漆</button><button onClick={() => setShow('wrap')}>自定义车衣</button></div></div>
       <div className="c3d-sec"><div className="c3d-sec-h">渲染</div><Seg options={[[ 'high', '高清'], ['power', '省电']]} current={quality} choose={setQuality} label="渲染" /></div>
       {cloud.data && <button className="link" onClick={() => void clearModel()}>清理模型缓存</button>}
       </>}

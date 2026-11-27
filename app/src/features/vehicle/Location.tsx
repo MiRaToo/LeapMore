@@ -6,8 +6,8 @@ import { ControlNotice, useCommands } from './commands';
 import { useVehicleControls } from './controls';
 import { AmapView } from './AmapView';
 import { AmapKeySheet, useAmapKey } from './AmapKey';
-import { openAmapNavigation, useAmapAddress, useAmapSuggestions } from './amapServices';
-import type { AmapPlace } from './amapServices';
+import { openAmapNavigation, useAmapAddress } from './amapServices';
+import { PlaceSearchSheet } from './PlaceSearchSheet';
 import type { Favorite } from '../../data/preferences';
 import { readSetting } from '../../data/localDatabase';
 import { AppBar, Hint, Row, Section, Sheet, SheetButtons, stamp } from '../../ui/components';
@@ -33,12 +33,7 @@ export function LocationPage() {
   const m = useModelContext();
   const { find, reason } = useVehicleControls();
   const command = useCommands();
-  const [manage, setManage] = useState(false);
   const [configureKey, setConfigureKey] = useState(false);
-  const [name, setName] = useState('');
-  const [address, setAddress] = useState('');
-  const [place, setPlace] = useState<AmapPlace | null>(null);
-  const [removeIndex, setRemoveIndex] = useState<number | null>(null);
   const navigationJob = useRef<AbortController | null>(null);
   const [loadingDestination, setLoadingDestination] = useState(false);
   const { key } = useAmapKey();
@@ -70,10 +65,8 @@ export function LocationPage() {
   const formatted = raw ? raw.lat.toFixed(m.simulated ? 4 : 6) + ', ' + raw.lon.toFixed(m.simulated ? 4 : 6) : '暂无定位';
   const updated = raw ? m.simulated ? '2 分钟前' : stamp(raw.at) : '';
   const addressResult = useAmapAddress(point, !m.simulated);
-  const suggestions = useAmapSuggestions(manage && removeIndex === null && !place ? address : '', point);
   const demoAddress = m.simulated && key && raw;
   const addressLabel = demoAddress ? '上海市浦东新区花木路 · 精度约 15 米' : addressResult.data;
-  const favoriteIcons = ['home', 'car', 'bolt'] as const;
   return <><AppBar title="车辆位置" back="/home" sub={updated ? '定位 ' + updated : undefined} /><div className="page no-nav location-page">
     {!permitted ? <div className="card grant-card"><div className="confirm-ic"><Icon name="locate" /></div><b>车辆定位未授权</b>
       <Link className="link" to="/vehicle-access">查看车辆授权</Link></div> :
@@ -97,42 +90,56 @@ export function LocationPage() {
         </section>
         {!key && <Hint>没有高德 Key 时只能显示坐标，无法把 GPS 解析成地址。<button className="link" onClick={() => setConfigureKey(true)}>去配置</button></Hint>}
         {addressResult.isError && <Hint kind="warn" icon="alert">地址解析失败，当前显示坐标。<button className="link" onClick={() => setConfigureKey(true)}>检查高德 Key</button></Hint>}
-        <Section className="location-favorites" title={<>常用地址<button className="link more" onClick={() => setManage(true)}>管理</button></>}>
-          {m.favorites.length ? m.favorites.map((fav, i) => <Row key={fav.name + ':' + i} icon={favoriteIcons[i] ?? 'locate'}
-            title={fav.name} sub={fav.address} right="发送导航" label={'发送导航到' + fav.name}
-            disabled={loadingDestination || !!reason('navigation')} onClick={() => void navigateTo(fav)} />) :
-            <p className="tiny muted">暂无常用地址</p>}
-        </Section>
+        <FavoriteAddresses key={m.profileScope + ':' + m.vehicleId} blocked={loadingDestination || !!reason('navigation')} navigateTo={navigateTo} />
         <details className="inline-details"><summary>定位说明</summary><p>地库或弱信号时，请留意最近的定位时间。</p></details>
       </>}
     {configureKey && <AmapKeySheet close={() => setConfigureKey(false)} />}
-    {manage && removeIndex === null && <Sheet title="常用地址" sub="快捷发送到车机导航" close={() => setManage(false)} showClose className="favorites-sheet">
-      {Object.keys(readSetting<Record<string, Favorite[]>>('favorites', {})).length > 0 && <p className="tiny muted">旧版常用地址未记录所属账号，因此不会自动显示。请为当前账号重新添加。</p>}
-      {m.favorites.map((fav, i) => <div className="row" key={fav.name + ':' + i}><span className="ic"><Icon name="home" size={18} /></span>
-        <span className="t">{fav.name}<small>{fav.address}</small></span><button className="link" aria-label={'删除' + fav.name} onClick={() => setRemoveIndex(i)}>删除</button></div>)}
-      {m.favorites.length > 0 && <div className="divider" />}
-      <form onSubmit={e => {
-        e.preventDefault();
-        if (!name.trim() || !address.trim()) return;
-        m.setFavorites([...m.favorites, { name: name.trim(), address: address.trim(), point: place?.point }]);
-        setName(''); setAddress(''); setPlace(null);
-      }}>
-        <div className="field"><input value={name} onChange={e => setName(e.target.value)} aria-label="名称" placeholder="名称（如 家 / 公司）" maxLength={30} /></div>
-        <div className="field"><input value={address} onChange={e => { setPlace(null); setAddress(e.target.value); }} aria-label="地址"
-          placeholder={key ? '搜索高德地点或输入地址' : '地址'} maxLength={100} autoComplete="off" /></div>
-        {suggestions.places.length > 0 && <div className="address-suggestions" role="group" aria-label="高德地点建议">
-          {suggestions.places.map((item, index) => <Row key={item.point.poiId ?? `${item.name}-${index}`} icon="locate"
-            title={item.name} sub={item.address} onClick={() => {
-              setPlace(item);
-              setAddress([item.address, item.name].filter(Boolean).join(' · '));
-            }} />)}
-        </div>}
-        {suggestions.failed && <p className="tiny muted" role="status">无法读取高德地点建议，可以手动填写地址。</p>}
-        <button className="btn secondary sm" disabled={!name.trim() || !address.trim()}>添加常用地址</button>
-      </form>
-    </Sheet>}
-    {removeIndex !== null && <Sheet title="删除常用地址？" close={() => setRemoveIndex(null)}><SheetButtons cancel={() => setRemoveIndex(null)} label="删除" action={() => {
-      m.setFavorites(m.favorites.filter((_, i) => i !== removeIndex)); setRemoveIndex(null);
-    }} /></Sheet>}
   </div></>;
+}
+
+function FavoriteAddresses({ blocked, navigateTo }: { blocked: boolean; navigateTo: (place: Favorite) => void }) {
+  const m = useModelContext();
+  const [editing, setEditing] = useState(false);
+  const [remove, setRemove] = useState<Favorite>();
+  const [step, setStep] = useState<'search' | 'name'>();
+  const [selected, setSelected] = useState<Favorite>();
+  const [name, setName] = useState('');
+  const icons = ['home', 'car', 'bolt'] as const;
+  function start() { setSelected(undefined); setName(''); setStep('search'); }
+  return <>
+    <Section className="location-favorites" title={<>常用地址<button type="button" className="link more" aria-pressed={editing}
+      onClick={() => setEditing(!editing)}>{editing ? '完成' : '管理'}</button></>}>
+      {editing && Object.keys(readSetting<Record<string, Favorite[]>>('favorites', {})).length > 0 &&
+        <p className="tiny muted">旧版常用地址未记录所属账号，请为当前账号重新添加。</p>}
+      {m.favorites.map((fav, i) => editing ? <div className="row favorite-edit-row" key={i}>
+        <span className="ic"><Icon name={icons[i] ?? 'locate'} size={19} /></span>
+        <span className="t">{fav.name}<small>{fav.address}</small></span>
+        <button type="button" className="favorite-delete" aria-label={'删除' + fav.name} onClick={() => setRemove(fav)}><Icon name="trash" size={17} /></button>
+      </div> : <Row key={i} icon={icons[i] ?? 'locate'} title={fav.name} sub={fav.address} right="发送导航" label={'发送导航到' + fav.name}
+        disabled={blocked} onClick={() => navigateTo(fav)} />)}
+      {!m.favorites.length && <p className="tiny muted">暂无常用地址</p>}
+      <button type="button" className="favorite-add" onClick={start}><Icon name="plus" size={18} />新增地址</button>
+    </Section>
+    {step === 'search' && <PlaceSearchSheet adding initialQuery={selected?.name} close={() => setStep(selected ? 'name' : undefined)}
+      choose={place => {
+        if (!name || name === selected?.name.slice(0, 30)) setName(place.name.slice(0, 30));
+        setSelected(place);
+        setStep('name');
+      }} />}
+    {step === 'name' && selected && <Sheet title="保存常用地址" close={() => setStep(undefined)} showClose>
+      <Row icon="locate" title={selected.name} sub={selected.address !== selected.name ? selected.address : undefined} right="更换" label="更换地点" onClick={() => setStep('search')} />
+      <label className="prep-field">名称<input aria-label="名称" maxLength={30} value={name} onChange={e => setName(e.target.value)} placeholder="家、公司或地点名称" /></label>
+      <button type="button" className="btn accent" disabled={!name.trim()} onClick={() => {
+        m.setFavorites([...m.favorites, { ...selected, name: name.trim(), address: selected.address && selected.address !== selected.name ? selected.address + ' · ' + selected.name : selected.name }]);
+        setStep(undefined);
+      }}>保存地址</button>
+    </Sheet>}
+    {remove && <Sheet title={'删除「' + remove.name + '」？'} sub={remove.address} close={() => setRemove(undefined)}>
+      <SheetButtons cancel={() => setRemove(undefined)} label="删除" action={() => {
+        const index = m.favorites.findIndex(fav => fav.name === remove.name && fav.address === remove.address &&
+          fav.point?.lat === remove.point?.lat && fav.point?.lon === remove.point?.lon);
+        if (index >= 0) m.setFavorites(m.favorites.filter((_, i) => i !== index));
+        setRemove(undefined);
+      }} /></Sheet>}
+  </>;
 }

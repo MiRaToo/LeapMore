@@ -44,7 +44,7 @@ export function PublishWidget() {
     canTrunk: controls[2].enabled, canFind: controls[3].enabled,
   } : null;
   const serialized = JSON.stringify(summary);
-  const ready = model.booted && (!summary || model.simulated || model.mode === 'ha' || model.controlStateReady || model.scenario === 'offline');
+  const ready = model.booted && commands.demoControlsReady && (!summary || model.simulated || model.mode === 'ha' || model.controlStateReady || model.scenario === 'offline');
   useEffect(() => {
     if (!ready) return;
     const next = JSON.parse(serialized) as typeof summary;
@@ -54,27 +54,34 @@ export function PublishWidget() {
 }
 
 export function WidgetAction() {
-  const { controls, model } = useWidgetData();
+  const { controls, model, commands } = useWidgetData();
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const handled = useRef(false);
   const kind = params.get('action');
   const intent = controls.find(c => c.id === kind);
   useEffect(() => {
-    if (!model.vehicle) return;
+    if (handled.current || !model.booted || !model.vehicle || !commands.demoControlsReady) return;
+    if (model.mode === 'cloud' && !model.expired && !model.controlStateReady && model.scenario !== 'offline') return;
+    handled.current = true;
     navigate('/home', { replace: true });
     if (intent?.enabled) intent.invoke();
     else if (intent) model.setToast('当前状态无法执行该控车操作。');
-  // Each widget intent is handled once when its route opens.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, model.vehicle?.id]);
+  }, [model, commands.demoControlsReady, intent, navigate]);
   return <p className="loading">正在打开车辆…</p>;
 }
 
 export function WidgetControl({ request }: { request: WidgetControlRequest }) {
   const { controls, model, commands } = useWidgetData();
   const intent = controls.find(control => control.id === request.action);
-  const waiting = !model.booted || model.mode === 'cloud' && !!model.vehicle && !model.expired &&
+  const waiting = !model.booted || !commands.demoControlsReady || model.mode === 'cloud' && !!model.vehicle && !model.expired &&
     !model.controlStateReady && model.scenario !== 'offline';
+  const [showProgress, setShowProgress] = useState(false);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => setShowProgress(true), 800);
+    return () => clearTimeout(timer);
+  }, [waiting]);
   const error = waiting ? '' : model.expired || !model.vehicle ? '请打开 LeapMore 登录并同步车况。' :
     request.vehicle !== widgetVehicle(model) ? '桌面卡片里的车辆已切换，请打开 LeapMore 更新卡片。' :
     !intent?.enabled ? commands.reason(intent?.id ?? 'find')?.[0] ?? '当前状态无法执行该控车操作。' : '';
@@ -85,6 +92,7 @@ export function WidgetControl({ request }: { request: WidgetControlRequest }) {
     intent.invoke();
   }, [waiting, error, intent]);
   if (started.current || !waiting && !error) return commands.step === 'confirmed' ? <PublishWidget /> : null;
+  if (waiting && !showProgress) return null;
   return <Sheet title="桌面控车" close={widgetBridge.closeControl} showClose>
     <p className="confirm-desc" role="status">{error || '正在读取车况…'}</p>
   </Sheet>;

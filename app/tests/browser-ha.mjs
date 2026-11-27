@@ -38,6 +38,10 @@ async function dragPlot(selector, from, to) {
   return readings;
 }
 const dragTimeline = (from,to) => dragPlot('.sample-timeline',from,to);
+async function checkReadout(expected) {
+  const actual = await b.run("Object.fromEntries([...document.querySelectorAll('.sample-readout dl > div')].map(row => [row.querySelector('dt').textContent, row.querySelector('dd').textContent]))");
+  for (const [key, value] of Object.entries(expected)) assert.equal(actual[key], value, key);
+}
 async function tap(point) {
   await b.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
   await b.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
@@ -68,8 +72,11 @@ try{
  await route('/records'); await checkLatestDay(); const trips=await text(/10.0 km/); assert.match(trips,/HA/); assert.doesNotMatch(trips,/1\.0 km/);
  assert.ok(await b.run(`(() => {
    const tabs = document.querySelector('.record-tabs'), group = tabs.getBoundingClientRect(), parent = tabs.parentElement.getBoundingClientRect();
-   const [first, second] = [...tabs.querySelectorAll('button')].map(button => button.getBoundingClientRect());
-   return Math.abs(group.left + group.right - parent.left - parent.right) < 2 && Math.abs(first.width - second.width) < 1 && group.right - second.right <= 5;
+   const actions = document.querySelector('.records-actions');
+   const [active, inactive] = [...tabs.querySelectorAll('button')].map(button => getComputedStyle(button));
+   return Math.abs(group.left - parent.left) < 2 && group.right < actions.getBoundingClientRect().left &&
+     actions.contains(document.querySelector('.record-range-toggle')) && active.fontSize === getComputedStyle(tabs.parentElement).fontSize &&
+     parseFloat(active.fontSize) > parseFloat(inactive.fontSize) && active.color !== inactive.color;
  })()`));
  const before=await b.run('document.querySelectorAll(".trip-row").length'); assert.equal(before,1);
  await text(/本月行程/);
@@ -103,7 +110,8 @@ try{
  })()`);
  assert.equal(placeholder.height, 210);
  assert.ok(placeholder.light > placeholder.dark, JSON.stringify(placeholder));
- await text(/行程路线/);
+ await text(/© 高德地图/);
+ assert.equal(await b.run("document.querySelector('.amap-trip .amap-bar')"),null);
  assert.deepEqual(await b.run(`['.amap-view','.trip-info','.trip-legs','.trip-leg:last-child'].map(sel => { const el = document.querySelector(sel); return [el.offsetTop,el.offsetWidth,el.offsetHeight]; })`), placeholder.layout);
  assert.ok(await b.run(`(() => {
    const dots = [...document.querySelectorAll('.trip-legs .leg-dot')];
@@ -113,27 +121,27 @@ try{
  })()`));
  await mode('normal');
  assert.match(await b.run("document.querySelector('.appbar .title').textContent"), /\d\d:\d\d → \d\d:\d\d/);
- assert.equal(await b.run("document.querySelector('.sample-timeline')"),null);
+ assert.equal(await b.run("document.querySelector('.sample-readout').dataset.sampleAt"),undefined);
  assert.ok(await b.run('document.querySelectorAll(".amap-speed-path").length >= 2'));
  await b.run("document.querySelector('.amap-view').scrollIntoView({block:'center'})");
  const mapPoint = await b.run(`(() => {const r=document.querySelector('.amap-route circle').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
- await tap(mapPoint); await text(/31.0 km\/h · SOC 62%/);
+ await tap(mapPoint); await checkReadout({ 车速: '31.0 km/h', '电量 SOC':'62%', 电池最低温:'-2 °C' });
  assert.equal(await b.run("!!document.querySelector('.trip-info + .chart-card .sample-timeline')"),true);
- assert.deepEqual(await b.run("[...document.querySelectorAll('.sample-axis-primary')].map(el=>el.textContent)"),['0','20','40','60','80']);
- await dragTimeline(.10, .65); await text(/68.0 km\/h · SOC 60%/);
+ assert.deepEqual(await b.run("[...document.querySelectorAll('.sample-axis-primary')].map(el=>el.textContent)"),['0','40','80']);
+ await dragTimeline(.10, .65); await checkReadout({ 车速: '68.0 km/h', '电量 SOC':'60%', 电池最低温:'0 °C' });
  assert.equal(await b.run("document.querySelector('.amap-route-cursor').dataset.sampleAt"),
    await b.run("document.querySelector('.sample-readout').dataset.sampleAt"));
  await b.run("document.querySelector('.sample-timeline').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))");
- await text(/SOC 59% · 暂无定位/);
+ await checkReadout({ '电量 SOC':'59%', 电池最低温:'暂无', 定位:'暂无定位' });
  assert.equal(await b.run("document.querySelector('.amap-route-cursor')"),null);
  await b.run("document.querySelector('.amap-view').scrollIntoView({block:'center'})");
  const blankMap = await b.run(`(() => {const r=document.querySelector('.amap-view').getBoundingClientRect();return {x:r.left+12,y:r.bottom-12};})()`);
  await tap(blankMap); await wait(120);
- assert.equal(await b.run("document.querySelector('.sample-timeline')"),null);
+ assert.equal(await b.run("document.querySelector('.sample-readout').dataset.sampleAt"),undefined);
  await b.run("document.querySelector('.amap-drag').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))");
- await text(/68.0 km\/h · SOC 60%/);
+ await checkReadout({ 车速: '68.0 km/h', '电量 SOC':'60%' });
  await b.run("document.querySelector('.amap-drag').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
- assert.equal(await b.run("document.querySelector('.sample-timeline')"),null);
+ assert.equal(await b.run("document.querySelector('.sample-readout').dataset.sampleAt"),undefined);
  assert.equal(await b.run('document.querySelector(".trip-coverage")'),null);
  const zoom = () => b.run('Number(document.querySelector(".amap-view").dataset.mapZoom)');
  const zoomBefore = await zoom();
@@ -154,7 +162,7 @@ try{
  };
  await pinch(25, 55);
  assert.ok(await zoom() > zoomBefore + .8);
- assert.equal(await b.run('document.querySelector(".sample-timeline")'),null);
+ assert.equal(await b.run('document.querySelector(".sample-readout").dataset.sampleAt'),undefined);
  await pinch(55, 25);
  assert.ok(Math.abs(await zoom() - zoomBefore) < .1);
  await b.click('[aria-label="回到路线"]');
@@ -172,6 +180,7 @@ try{
  assert.deepEqual(await b.run("[...document.querySelectorAll('[aria-label=记录类型] [role=tab]')].map(tab=>tab.textContent.trim())"), ['行程','充电']);
  assert.doesNotMatch(await b.run('document.body.innerText'),/31\.4 kWh|22\.8 kWh/);
  assert.equal(await b.run('document.querySelectorAll(".trip-row").length'),1);
+ await b.click('.record-range-toggle');
  await b.click('[aria-label=充电时间范围] button:last-child');
  await text(/全部充电/);
  await text(/2 次 · 36.2 kWh/);
@@ -179,16 +188,28 @@ try{
  assert.ok(await b.run("document.querySelector('a[href*=older-dc]').checkVisibility()"));
  assert.match(await b.run("document.querySelector('.record-total').textContent"), /2 次 · 36.2 kWh/);
  await route('/charges/ha-charge-older-dc'); await text(/20\.0\s*kWh/); await text(/电池最低温\s*—\s*暂无记录/);
+ await route('/records-source');
+ await b.run("[...document.querySelectorAll('.source-opt')].find(el=>el.querySelector('b').textContent==='关闭记录').click()");
+ await mode('offline');
+ await route('/records?tab=charges'); await b.reload();
+ await text(/2 次 · 36.2 kWh/);
+ await route('/charges/ha-charge-older-dc'); await text(/20\.0\s*kWh/);
+ await route('/trips/ha-trip-ledger-test'); await text(/10\.0\s*km/);
+ assert.ok(await b.run('!!document.querySelector(".amap-route circle")'), '关闭同步后可离线读取已经查看过的轨迹');
+ await mode('normal'); await route('/records-source');
+ await b.run("[...document.querySelectorAll('.source-opt')].find(el=>el.querySelector('b').textContent==='HA 同步').click()");
  await route('/records?tab=charges');
- await b.click('[aria-label=充电时间范围] button:nth-child(2)');
+ await b.click('.record-range-toggle');
+ await b.click('[aria-label=充电时间范围] button:nth-child(3)');
  await route('/records');
  assert.equal(await b.run('document.querySelector(".trip-sum").getBoundingClientRect().height'), chargeHeight);
  await route('/charges/ha-charge-ledger-charge'); await text(/充电功率/); await text(/平均采样功率/);
  await text(/电池最低温\s*12\.5\s*°C/);
- assert.deepEqual(await b.run("[...document.querySelectorAll('.sample-axis-primary')].map(el=>el.textContent)"),['0','2','4','6','8']);
- assert.deepEqual(await b.run("[...document.querySelectorAll('.sample-axis-soc')].map(el=>el.textContent)"),['0','25','50','75','100']);
- await dragTimeline(.10, .50); await text(/暂无功率 · SOC 55%/);
- await dragTimeline(.50, .92); await text(/7.1 kW · SOC 67%/);
+ assert.deepEqual(await b.run("[...document.querySelectorAll('.sample-axis-primary')].map(el=>el.textContent)"),['0','4','8']);
+ assert.deepEqual(await b.run("[...document.querySelectorAll('.sample-axis-soc')].map(el=>el.textContent)"),['0','50','100']);
+ await dragTimeline(.10, .50); await checkReadout({ 充电功率:'暂无', '电量 SOC':'55%' });
+ await dragTimeline(.50, .75); await checkReadout({ 充电功率:'7.1 kW', '电量 SOC':'67%' });
+ await dragTimeline(.75,.99); await checkReadout({ 电池最低温:'19 °C' });
  const feeReading = () => b.run("document.querySelector('.charge-cost-actions').previousElementSibling.querySelector('dd b').textContent");
  const autoFee = await feeReading();
  await click('修改本次电费'); await text(/自动估算 ¥/);
@@ -267,6 +288,37 @@ try{
  await mode('active-ledger'); await click('立即同步'); await route('/records'); await text(/正在记录行程/);
  assert.equal(await b.run('document.querySelectorAll(".trip-row").length'),1);
  assert.deepEqual(await b.run('[...document.querySelectorAll(".recording dd")].map(e => e.textContent)'), ['47 km/h', '4.5 km']);
+ await b.run(`(async () => {
+   const original = window.fetch;
+   window.geocodes = [];
+   window.fetch = (input, init) => {
+     const url = new URL(input instanceof Request ? input.url : input, location.href);
+     if (url.hostname !== 'restapi.amap.com' || !url.pathname.endsWith('/regeo')) return original(input, init);
+     window.geocodes.push(url.searchParams.get('location'));
+     return Promise.resolve(Response.json({status:'1',regeocode:{formatted_address:'测试地址 ' + url.searchParams.get('location')}}));
+   };
+   await (await import('/src/platform/secure.ts')).secureSet('amap-key', 'fixture-key');
+   window.dispatchEvent(new Event('leapmore-amap-key-changed'));
+ })()`);
+ await b.click('.record-range-toggle');
+ await b.click('[aria-label=行程时间范围] button:first-child');
+ await text(/正在记录行程/);
+ assert.equal(await b.run('document.querySelector(".record-meta-status").textContent'), '正在记录行程');
+ assert.match(await b.run('document.querySelector(".trip-info").textContent'), /4.5 km.*实时车速47 km\/h/);
+ await text(/起点[\s\S]*测试地址/);
+ const latestPosition = () => b.run("document.querySelector('.trip-leg:last-child small')?.textContent");
+ assert.match(await latestPosition(), /^\d+\.\d{5}, \d+\.\d{5}$/);
+ assert.equal(await b.run('window.geocodes.length'), 1);
+ await route('/trips/ha-trip-ledger-test'); await text(/终点[\s\S]*测试地址/);
+ assert.equal(await b.run('window.geocodes.length'), 2);
+ await route('/trips/ha-trip-active-trip'); await text(/最新定位/);
+ assert.match(await b.run('document.querySelector(".trip-info").textContent'), /4.5 km.*实时车速47 km\/h/);
+ assert.match(await latestPosition(), /^\d+\.\d{5}, \d+\.\d{5}$/);
+ assert.equal(await b.run('window.geocodes.length'), 2);
+ await b.run(`(async () => { await (await import('/src/platform/secure.ts')).secureRemove('amap-key'); window.dispatchEvent(new Event('leapmore-amap-key-changed')); })()`);
+ await route('/records');
+ await b.click('.record-range-toggle');
+ await b.click('[aria-label=行程时间范围] button:nth-child(3)');
  await route('/records?tab=charges');
  assert.equal(await b.run('document.querySelectorAll(".recording").length'),0);
  await mode('active-charge'); await route('/ha'); await click('立即同步'); await text(/已读取 1 条行程 · 2 条充电记录/);
@@ -274,6 +326,12 @@ try{
  assert.equal(await b.run('document.querySelectorAll(".recording").length'),0);
  await route('/records?tab=charges'); await text(/正在记录充电/);
  assert.deepEqual(await b.run('[...document.querySelectorAll(".recording dd")].map(e => e.textContent)'), ['61.0%', '4.2 kWh', '7.4 kW']);
+ await b.click('.record-range-toggle');
+ await b.click('[aria-label=充电时间范围] button:first-child');
+ await text(/正在记录充电/);
+ assert.match(await b.run('document.querySelector(".trip-info").textContent'), /当前电量61.0 %.*充电功率7.4 kW/);
+ await b.click('.record-range-toggle');
+ await b.click('[aria-label=充电时间范围] button:nth-child(3)');
  await mode('empty-ledger'); await route('/ha'); await click('立即同步'); await text(/已读取 0 条行程 · 0 条充电记录/);
  await route('/records?tab=charges'); await text(/暂无充电记录/);
  assert.equal(await b.run('document.querySelectorAll(".recording").length'),0);
@@ -290,6 +348,9 @@ try{
  await mode('normal'); await click('手动输入长期访问令牌'); await fill('[aria-label="访问令牌"]','local-manual-fixture'); await click('连接并测试'); await text(/已连接/); await text(/立即同步/);
  await route('/records-source'); await text(/清理本地记录/); await b.run("Array.from(document.querySelectorAll('button.row')).find(e=>e.innerText.includes('清理本地记录')).click()");await text(/输入「清除本地记录」/);
  await fill('[aria-label="输入清除本地记录"]','清除本地记录');await click('清除记录');await text(/已关闭记录/);
+ await route('/records'); await b.reload(); await text(/暂无行程记录/);
+ await route('/records?tab=charges'); await text(/暂无充电记录/);
+ assert.equal(await b.run('document.querySelectorAll(".trip-row").length'), 0);
  await mode('limited');
  await b.send('Storage.clearDataForOrigin', { origin: new URL(app).origin, storageTypes: 'local_storage,indexeddb' });
  await route('/ha'); await b.reload(); await text(/登录 Home Assistant/);

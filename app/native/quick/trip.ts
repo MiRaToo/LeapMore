@@ -1,7 +1,7 @@
 import { CloudSessionExpired, LiveVehicleClient, exchangeCarToken } from '../../src/data/cloud/LiveClient';
 import type { LiveVehicles } from '../../src/data/cloud/LiveClient';
 import { CloudRateLimited, VehiclePolling } from '../../src/data/cloud/polling';
-import { cloudFrame } from '../../src/data/cloud/records';
+import { cloudFrame, RepeatedReportParking } from '../../src/data/cloud/records';
 
 // The recording host exposes only HTTP and the result callback. No control or password bridge is installed.
 export function tripSampler(credentials: string, account: string, id: string, vin: string) {
@@ -10,6 +10,8 @@ export function tripSampler(credentials: string, account: string, id: string, vi
   let client = new LiveVehicleClient(car, session.account, session.deviceId);
   let checkedAt = 0, mayLocate = false;
   const polling = new VehiclePolling();
+  const startedAt = Date.now();
+  const parking = new RepeatedReportParking();
   return async (locationAllowed: boolean) => {
     const finish = (result: object) => QuickHost.finish('', JSON.stringify(result));
     try {
@@ -32,7 +34,9 @@ export function tripSampler(credentials: string, account: string, id: string, vi
       if (state.vehicleId !== id) { finish({ interrupt: '车辆信息不匹配' }); return; }
       polling.observe(state);
       const report = mayLocate && locationAllowed ? state : { ...state, latitude: null, longitude: null };
-      finish({ report, frame: cloudFrame(report, mayLocate && locationAllowed), delay: polling.delay() });
+      const frame = cloudFrame(report, mayLocate && locationAllowed, Date.now(), polling.delay());
+      const sample = frame && frame.at >= startedAt - 1000 ? parking.observe(frame, Date.now()) ?? frame : null;
+      finish({ report, frame: sample, delay: polling.delay() });
     } catch (error) {
       if (error instanceof CloudSessionExpired) { finish({ interrupt: '请解锁并刷新登录后继续' }); return; }
       if (error instanceof CloudRateLimited) polling.rateLimit();

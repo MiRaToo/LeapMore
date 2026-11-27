@@ -22,6 +22,12 @@ for bundle in "$app" "$widget"; do
   binary="$bundle/$("$plist" -c 'Print CFBundleExecutable' "$bundle/Info.plist")"
   lipo "$binary" -verify_arch arm64
   xcrun vtool -arch arm64 -show-build "$binary" | grep -Eq 'platform[[:space:]]+IOS$'
+  # xcodebuild build leaves object-file paths in the linker debug map.
+  xcrun strip -S "$binary"
+  if LC_ALL=C grep -aEq '/Users/|/var/folders/' "$binary"; then
+    echo 'iOS release executable contains a build-machine path' >&2
+    exit 1
+  fi
 done
 
 # Carry the requested App Group through to the user's installation-time signature.

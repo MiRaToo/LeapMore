@@ -65,7 +65,7 @@ public class LeapRecordingService extends Service {
                 wakeLock.acquire();
             }
             running = this;
-            plugin.status(true, "");
+            plugin.status(true, "", scope);
             schedule(250);
         } catch (RuntimeException ignored) {
             reason = "failed";
@@ -125,7 +125,7 @@ public class LeapRecordingService extends Service {
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (running == this) running = null;
         LeapRecorderPlugin plugin = owner.get();
-        if (plugin != null) plugin.status(false, reason);
+        if (plugin != null) plugin.status(false, reason, scope);
         super.onDestroy();
     }
 

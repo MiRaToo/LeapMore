@@ -256,7 +256,8 @@ public abstract class LeapWidget extends AppWidgetProvider {
         intent.setData(Uri.parse("leap-widget://control/" + action + "/" + Uri.encode(vehicle)));
         intent.putExtra(WidgetControlActivity.ACTION, action);
         intent.putExtra(WidgetControlActivity.VEHICLE, vehicle);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-        return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE,
+            android.app.ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle());
     }
 }

@@ -23,12 +23,14 @@ export const permitsCommand = (vehicle: Vehicle, id: number) =>
   !vehicle.commandRights?.length || vehicle.commandRights.includes(String(id));
 export const permitsFeature = (vehicle: Vehicle, id: number) =>
   !vehicle.abilities?.length || vehicle.abilities.includes(String(id));
+// The preparation editor uses the navigation module (30). Some cars list the standalone send command (180).
+export const permitsPreparationNavigation = (vehicle: Vehicle) => permitsFeature(vehicle, 30) || permitsFeature(vehicle, 180);
 export const preparationModules = {
   syn_path: 180, air_condition: 170, seat_setting: 301, steeringWheelHeatCtrl: 320, rearMirrorHeating: 440,
 } as const;
 export function allowsPreparationContent(vehicle: Vehicle, content: PreparationContent, scheduled: boolean, location: boolean) {
   return Object.keys(content).length > 0 && (!content.syn_path || location) &&
-    Object.entries(preparationModules).every(([key, id]) => !content[key] || permitsFeature(vehicle, scheduled && id === 170 ? 171 : id));
+    Object.entries(preparationModules).every(([key, id]) => !content[key] || (key === 'syn_path' ? permitsPreparationNavigation(vehicle) : permitsFeature(vehicle, scheduled && id === 170 ? 171 : id)));
 }
 
 export function preparationContent(preset: PreparationPreset, vehicle: Vehicle): PreparationContent {
@@ -39,7 +41,7 @@ export function preparationContent(preset: PreparationPreset, vehicle: Vehicle):
       throw new RemoteCommandError('请选择有坐标的导航目的地。');
     }
     content.syn_path = { enable: true, addressname: dest.name, address: dest.address, addresskey: dest.poiId ?? '',
-      latitude: String(dest.lat), longitude: String(dest.lon), config: '0', linenum: '' };
+      latitude: String(dest.lat), longitude: String(dest.lon), linenum: '0' };
   }
   if (preset.climate) {
     const selected = findClimatePreset(preset.climatePreset);
@@ -51,7 +53,7 @@ export function preparationContent(preset: PreparationPreset, vehicle: Vehicle):
       if (!Number.isInteger(preset.temperature) || preset.temperature < 16 || preset.temperature > 32 ||
           !Number.isInteger(preset.fan) || preset.fan < 1 || preset.fan > 7) throw new RemoteCommandError('请选择有效的空调温度与风量。');
       const modern = vehicle.abilities?.includes('12');
-      content.air_condition = { enable: true, operate: modern ? 'auto' : 'manual', mode: modern || vehicle.carType === 'T03' ? 'nohotcold' : '',
+      content.air_condition = { enable: true, operate: 'manual', mode: modern || vehicle.carType === 'T03' ? 'nohotcold' : '',
         temperature: String(preset.temperature), windlevel: String(preset.fan), circle: 'out' };
     }
   }

@@ -16,9 +16,10 @@ export const clock = (time: number | undefined | null) =>
 export const stamp = (time: number | undefined | null) =>
   time ? new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(time) : '—';
 
-export function AppBar({ title, back, sub, action, className = '' }: { title: ReactNode; back?: string; sub?: string; action?: ReactNode; className?: string }) {
+export function AppBar({ title, back, leading, sub, action, className = '' }: { title: ReactNode; back?: string; leading?: ReactNode; sub?: ReactNode; action?: ReactNode; className?: string }) {
+  const backButton = back && <Link className="iconbtn" to={back} aria-label="返回"><Icon name="back" size={18} /></Link>;
   return <header className={'appbar ' + className}>
-    {back && <Link className="iconbtn" to={back} aria-label="返回"><Icon name="back" size={18} /></Link>}
+    {leading ? <div className="appbar-leading">{backButton}{leading}</div> : backButton}
     <div className="grow"><div className="title">{title}</div>{sub && <div className="sub">{sub}</div>}</div>{action}
   </header>;
 }

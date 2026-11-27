@@ -63,13 +63,16 @@ try{
  })).size`),1);
  const shot=async(name)=>{if (!process.env.LEAPMORE_SCREENSHOT_DIR) return; const s=await b.send('Page.captureScreenshot',{format:'png',fromSurface:true});await writeFile(join(process.env.LEAPMORE_SCREENSHOT_DIR,'leapmore-'+name+'.png'), Buffer.from(s.data,'base64'));};
  await shot('home-320');
- const [lightSurface] = await cardSurfaces('.home-entries .entry');
+ assert.ok((await cardSurfaces('.home-cards > .grid2 > .card, .home-entries > .entry')).every(surface => surface[1] === '12px'));
+ await page('/records-source');
+ const [lightSurface] = await cardSurfaces('.sec');
+ await b.click('.source-opt:first-of-type');
  for(const path of ['/home','/control','/climate','/charging','/location','/appearance','/energy','/records','/trips/demo-trip-0','/charges/demo-charge-0','/records-source','/background-guide','/ha','/ha-mapping','/mine','/mine/appearance','/vehicle-manage','/operation-pin','/amap','/vehicle-access','/states','/widgets','/driving-lock','/subaccount']) {
    await page(path);
    if (surfaceRoutes[path]) await sameSurfaces(lightSurface, surfaceRoutes[path]);
  }
- await page('/mine/appearance'); await click('深色'); await page('/home');
- const [darkSurface] = await cardSurfaces('.home-entries .entry');
+ await page('/mine/appearance'); await click('深色'); await page('/records-source');
+ const [darkSurface] = await cardSurfaces('.sec');
  for (const [path, selector] of Object.entries(surfaceRoutes)) { await page(path); await sameSurfaces(darkSurface, selector); }
  await page('/mine/appearance'); await click('浅色');
  await page('/location');
@@ -94,7 +97,8 @@ try{
  await waitMapTheme(false);
  await b.send('Emulation.setEmulatedMedia',{features:[]});
  await page('/records');
- assert.equal(await b.run('document.querySelectorAll(".records-actions svg").length'),2);
+ assert.deepEqual(await b.run('[...document.querySelectorAll(".records-actions button,.records-actions a")].map(el=>el.ariaLabel)'),
+   ['行程时间范围，本月','行程显示','记录设置']);
  assert.ok(await b.run('document.querySelector(".appbar .record-tabs") && [...document.querySelectorAll(".records-actions .icon-action")].every(el=>!el.textContent.trim())'));
  assert.doesNotMatch(await b.run('document.body.innerText'),/记录说明/);
  await page('/charging');
@@ -160,8 +164,8 @@ try{
  await click('大 · 4×4'); assert.equal(await b.run(`!!${find('寻车')}`),true); await shot('widget-320');
 
  async function openDemoSettings() {
-   await page('/states');
-   if (!await b.run('document.querySelector(".diagnostic-demo").open')) await b.click('.diagnostic-demo > summary');
+   await page('/mine');
+   if (!await b.run('!!document.querySelector(".demo-settings-sheet")')) await click('演示情景');
  }
  const grantSelectors=['.debug-grants label:nth-of-type(2) input','.debug-grants label:nth-of-type(3) input','.debug-grants label:nth-of-type(4) input'];
  for(let mask=0;mask<8;mask++) {
@@ -181,6 +185,7 @@ try{
     for (const path of ['/records?tab=charges', '/charges/demo-charge-0']) {
       await page(path);
       assert.equal(await b.run('!!document.querySelector(".charge-place")'), !!(mask & 2));
+      if (path.startsWith('/charges/')) assert.equal(await b.run('!!document.querySelector(".amap-record")'), !!(mask & 2));
     }
   }
  }
@@ -211,9 +216,9 @@ try{
  assert.deepEqual(await lockAppearance(),[...closedLock.slice(0,2), true]);
  await page('/energy'); assert.match(await b.run('document.body.innerText'),/里程能耗未授权/);
  await openDemoSettings();
- await b.click('.debug-check input'); await page('/home'); assert.match(await b.run('document.body.innerText'),/停车挂 P/);
+ await b.click('[aria-label=模拟行驶]'); await page('/home'); assert.match(await b.run('document.body.innerText'),/停车挂 P/);
  assert.equal(await b.run('document.querySelector(".hero-actions [aria-label=上锁车门]").disabled'),true);
- await openDemoSettings(); await b.click('.debug-check input');
+ await openDemoSettings(); await b.click('[aria-label=模拟行驶]');
  await b.click('[aria-label=数据状态]'); await b.click('dialog[open] [data-value=pending]');
  await page('/home');await b.click('.hero-actions [aria-label=上锁车门]');await click('确认发送');
  await commandStatus('车辆未确认');await click('关闭');
